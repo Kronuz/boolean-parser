@@ -170,6 +170,25 @@ and the `[a,b,c]` list), checks `Parse()` yields the right AST shape, and
 confirms malformed inputs throw `LexicalException` / `SyntacticException`. It
 prints `all boolean-parser tests passed` and exits 0.
 
+## Examples
+
+[`examples/demo.cc`](examples/demo.cc) is a runnable tour. A top-level CMake build
+produces it next to the test:
+
+```sh
+cmake -B build && cmake --build build && ./build/boolean_parser_demo
+```
+
+For each of a handful of expressions it prints all three forms: the raw input,
+the RPN token stream the constructor produced, and the AST (from `Parse()`) drawn
+as an indented tree. So you can watch one source string resolve into both
+consumable shapes, and watch precedence and grouping fall out of the
+shunting-yard. It runs an explicitly-parenthesized expression, two that lean on
+precedence alone (`NOT > AND > MAYBE > XOR > OR`), the symbolic spellings
+(`& | !`) and the adjacent-id default-join with `OR`, a quoted phrase and a
+`[a,b,c]` list each as a single `Id`, and a malformed input that throws a
+`SyntacticException` instead of producing a tree.
+
 ## Provenance
 
 Extracted from [Xapiand](https://github.com/Kronuz/Xapiand), where this parser
