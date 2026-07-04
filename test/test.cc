@@ -277,6 +277,23 @@ static void test_errors() {
 		assert(!msg.empty());
 	}
 
+	// Dangling operators (e.g. "a AND AND b", "a AND", "AND a") produce an RPN
+	// with more operators than operands. The tree builder in Parse() used to
+	// recurse onto an emptied output list and dereference .back() on an empty
+	// list (undefined behavior -> abort); it now throws SyntacticException. The
+	// ctor succeeds (the RPN is well-formed as a token stream); Parse() is what
+	// rejects it, so the throw is exercised there.
+	for (const char* bad : {"a AND AND b", "a AND", "AND a", "a OR OR b"}) {
+		bool threw = false;
+		try {
+			BooleanTree tree(bad);
+			tree.Parse();
+		} catch (const SyntacticException&) {
+			threw = true;
+		}
+		assert(threw);
+	}
+
 	std::printf("errors OK: malformed inputs throw Lexical/Syntactic exceptions\n");
 }
 

@@ -64,6 +64,13 @@ BooleanTree::Parse()
 std::unique_ptr<BaseNode>
 BooleanTree::BuildTree()
 {
+	/* A dangling operator (e.g. "a AND AND b", "a AND", "NOT") recurses for
+	 * operands the RPN queue does not have, emptying stack_output. Guard the
+	 * .back()/.pop_back() below so malformed input throws cleanly instead of
+	 * dereferencing an empty list (previously undefined behavior -> abort). */
+	if (stack_output.empty()) {
+		throw SyntacticException("Unexpected end of expression");
+	}
 	if (stack_output.size() == 1 || stack_output.back().get_type() == TokenType::Id) {
 		Token token = stack_output.back();
 		stack_output.pop_back();
