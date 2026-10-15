@@ -1,5 +1,7 @@
 # boolean-parser
 
+[![CI](https://github.com/Kronuz/boolean-parser/actions/workflows/ci.yml/badge.svg)](https://github.com/Kronuz/boolean-parser/actions/workflows/ci.yml)
+
 A small C++17 **boolean-expression parser** — lexer, Dijkstra shunting-yard, AST,
 and an RPN token stream — extracted from
 [Xapiand](https://github.com/Kronuz/Xapiand).
