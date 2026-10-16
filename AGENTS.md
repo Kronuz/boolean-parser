@@ -19,7 +19,9 @@ SyntacticException.h           Parser error; owns a std::string. Header.
 test/test.cc                   Runnable smoke test: RPN token stream, precedence, quoting, lists, AST shape, error throws.
 CMakeLists.txt                 STATIC library `boolean_parser` (+ alias boolean_parser::boolean_parser); CTest test `boolean_parser`.
 LICENSE                        MIT, Copyright (c) 2015-2019 Dubalu LLC.
-README.md                      What it is, install, usage, API reference.
+README.md                      What it is, install, quick start.
+docs/API.md                    The API reference and caveats.
+docs/boolean-parser.d2         The README diagram's source (docs/boolean-parser.svg is rendered from it).
 ARCHITECTURE.md                Internal design: the lexer, the shunting-yard, the AST build.
 ```
 

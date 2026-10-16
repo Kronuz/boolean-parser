@@ -1,0 +1,29 @@
+# boolean-parser: a query string becomes an RPN token queue, and on demand an AST.
+# Render: d2 --layout elk --sketch --theme 302 docs/boolean-parser.d2 docs/boolean-parser.svg
+direction: right
+
+input: '"a OR (b AND NOT c)"' {
+  label: "\"a OR (b AND NOT c)\""
+}
+
+rpn: RPN queue {
+  shape: queue
+  label: "RPN queue\na b c NOT AND OR"
+}
+
+ast: AST {
+  or: OR
+  a: a
+  and: AND
+  b: b
+  not: NOT
+  c: c
+  or -> a
+  or -> and
+  and -> b
+  and -> not
+  not -> c
+}
+
+input -> rpn: "BooleanTree(input)\nlex + shunting-yard"
+rpn -> ast: "Parse()"
