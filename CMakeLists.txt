@@ -27,7 +27,8 @@ add_library(boolean_parser::boolean_parser ALIAS boolean_parser)
 if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
   enable_testing()
   add_executable(boolean_parser_test test/test.cc)
-  target_link_libraries(boolean_parser_test PRIVATE boolean_parser)
+  find_package(Threads REQUIRED)
+  target_link_libraries(boolean_parser_test PRIVATE boolean_parser Threads::Threads)
   add_test(NAME boolean_parser COMMAND boolean_parser_test)
 
   # A runnable tour of the library (not a test): build & run ./build/boolean_parser_demo

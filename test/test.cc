@@ -18,6 +18,7 @@
 // Build via CMake: cmake -B build && cmake --build build && ctest --test-dir build
 #include <cassert>
 #include <cstdio>
+#include <pthread.h>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -26,9 +27,11 @@
 #include "BooleanParser.h"
 #include "IdNode.h"
 #include "LexicalException.h"
+#include "MaybeNode.h"
 #include "NotNode.h"
 #include "OrNode.h"
 #include "SyntacticException.h"
+#include "XorNode.h"
 
 
 // Render one RPN token as a compact symbol: operators as their name, an Id as
@@ -298,7 +301,81 @@ static void test_errors() {
 }
 
 
+// ---------------------------------------------------------------------------
+// 7. Operand order and depth: binary operators keep source order on every compiler,
+//    and nesting far deeper than a thread's stack builds and tears down.
+// ---------------------------------------------------------------------------
+
+static std::string id_of(BaseNode* node) {
+	auto* id = dynamic_cast<IdNode*>(node);
+	assert(id != nullptr);
+	return id->getId();
+}
+
+static void test_operand_order() {
+	{
+		BooleanTree tree("a MAYBE b");
+		tree.Parse();
+		auto* maybe = dynamic_cast<MaybeNode*>(tree.root.get());
+		assert(maybe != nullptr);
+		assert(id_of(maybe->getLeftNode()) == "a");   // required side
+		assert(id_of(maybe->getRightNode()) == "b");  // boost side
+	}
+	{
+		BooleanTree tree("a AND NOT b");
+		tree.Parse();
+		auto* andn = dynamic_cast<AndNode*>(tree.root.get());
+		assert(andn != nullptr);
+		assert(id_of(andn->getLeftNode()) == "a");
+		assert(andn->getRightNode()->getType() == NodeType::NOT);
+	}
+	{
+		BooleanTree tree("x XOR y");
+		tree.Parse();
+		auto* xorn = dynamic_cast<XorNode*>(tree.root.get());
+		assert(xorn != nullptr);
+		assert(id_of(xorn->getLeftNode()) == "x" && id_of(xorn->getRightNode()) == "y");
+	}
+	std::printf("order OK: binary operands keep source order\n");
+}
+
+static void* parse_deep(void*) {
+	constexpr int depth = 200000;
+	std::string nots;
+	for (int i = 0; i < depth; ++i) nots += "NOT ";
+	nots += "a";
+	{
+		BooleanTree tree(nots);
+		tree.Parse();
+		assert(tree.root->getType() == NodeType::NOT);
+	}
+	std::string ands = "a";
+	for (int i = 0; i < depth; ++i) ands += " AND a";
+	{
+		BooleanTree tree(ands);
+		tree.Parse();
+		assert(tree.root->getType() == NodeType::AND);
+	}
+	return nullptr;
+}
+
+static void test_deep_nesting() {
+	// 512 KiB is macOS's default secondary-thread stack; recursion overflowed it
+	// near 1,000 levels unoptimized.
+	pthread_attr_t attr;
+	pthread_attr_init(&attr);
+	pthread_attr_setstacksize(&attr, 512 * 1024);
+	pthread_t thread;
+	assert(pthread_create(&thread, &attr, parse_deep, nullptr) == 0);
+	pthread_join(thread, nullptr);
+	pthread_attr_destroy(&attr);
+	std::printf("depth OK: 200,000 levels build and tear down on a 512 KiB stack\n");
+}
+
+
 int main() {
+	test_operand_order();
+	test_deep_nesting();
 	test_basic_rpn();
 	test_precedence();
 	test_adjacent_ids();

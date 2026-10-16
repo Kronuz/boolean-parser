@@ -63,8 +63,6 @@ a tree, for a handful of expressions.
 ## 🎯 When to use it
 
 - ✅ Parsing user-facing boolean query syntax into a structure you evaluate.
-- ❌ Untrusted input of unbounded length: `Parse()` has no depth limit yet, so
-  bound the input first ([docs/API.md](docs/API.md#caveats)).
 - ❌ Arithmetic, comparisons, or field syntax: it knows boolean operators and
   terms only.
 

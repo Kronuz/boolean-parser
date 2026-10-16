@@ -39,6 +39,10 @@ public:
 		return node.get();
 	}
 
+	void release_children(std::vector<std::unique_ptr<BaseNode>>& out) override {
+		if (node) { out.push_back(std::move(node)); }
+	}
+
 	NodeType getType() const noexcept override {
 		return NodeType::NOT;
 	}

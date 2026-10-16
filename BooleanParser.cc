@@ -23,9 +23,12 @@
 #include "BooleanParser.h"
 
 #include <algorithm>
+#include <array>
 #include <cstring>
 #include <iomanip>
 #include <iostream>
+#include <string>
+#include <vector>
 
 #include "AndNode.h"
 #include "IdNode.h"
@@ -49,59 +52,143 @@ BooleanTree::BooleanTree(std::string_view input_)
 }
 
 
+namespace {
+
+// Trees at most this deep are destroyed by ordinary recursion: about 70 KiB of stack
+// unoptimized under ASan, well inside a 512 KiB thread. Deeper ones are torn down
+// iteratively.
+constexpr std::size_t recursive_destroy_depth = 64;
+
+// Operands built so far: each subtree, its depth, and the token that produced it (for
+// error messages; list elements stay put). Tears deep subtrees down iteratively if
+// parsing throws.
+struct Operand {
+	std::unique_ptr<BaseNode> node;
+	std::size_t depth = 0;
+	const Token* head = nullptr;
+};
+
+// A stack of operands: the first 32 live inline, so a typical query allocates nothing
+// here; longer ones spill to the heap.
+class Operands {
+	static constexpr std::size_t inline_capacity = 32;
+	std::array<Operand, inline_capacity> local;
+	std::vector<Operand> spill;
+	std::size_t count = 0;
+
+public:
+	~Operands() {
+		for (std::size_t i = 0; i < count; ++i) {
+			auto& item = at(i);
+			if (item.depth > recursive_destroy_depth) {
+				destroy_tree(std::move(item.node));
+			}
+		}
+	}
+
+	std::size_t size() const noexcept { return count; }
+
+	Operand& at(std::size_t i) { return i < inline_capacity ? local[i] : spill[i - inline_capacity]; }
+
+	void need(std::size_t n) const {
+		if (count < n) {
+			throw SyntacticException("Unexpected end of expression");
+		}
+	}
+
+	void push(Operand item) {
+		if (count < inline_capacity) {
+			local[count] = std::move(item);
+		} else {
+			spill.push_back(std::move(item));
+		}
+		++count;
+	}
+
+	Operand pop() {
+		--count;
+		if (count < inline_capacity) {
+			return std::move(local[count]);
+		}
+		auto item = std::move(spill.back());
+		spill.pop_back();
+		return item;
+	}
+};
+
+}  // namespace
+
+
 void
 BooleanTree::Parse()
 {
+	release_root();
 	root = BuildTree();
-	if (!stack_output.empty()) {
-		Token token = stack_output.back();
-		std::string msj = "'" + token.get_lexeme() + "' not expected";
-		throw SyntacticException(msj.c_str());
+}
+
+
+void
+BooleanTree::release_root()
+{
+	if (root_depth > recursive_destroy_depth) {
+		destroy_tree(std::move(root));
 	}
+	root.reset();
+	root_depth = 0;
 }
 
 
 std::unique_ptr<BaseNode>
 BooleanTree::BuildTree()
 {
-	/* A dangling operator (e.g. "a AND AND b", "a AND", "NOT") recurses for
-	 * operands the RPN queue does not have, emptying stack_output. Guard the
-	 * .back()/.pop_back() below so malformed input throws cleanly instead of
-	 * dereferencing an empty list (previously undefined behavior -> abort). */
-	if (stack_output.empty()) {
-		throw SyntacticException("Unexpected end of expression");
-	}
-	if (stack_output.size() == 1 || stack_output.back().get_type() == TokenType::Id) {
-		Token token = stack_output.back();
-		stack_output.pop_back();
-		std::string id = token.get_lexeme();
-		return std::make_unique<IdNode>(id);
-	}
-	/* Error case */
-	if (stack_output.size() == 1 && stack_output.back().get_type() != TokenType::Id) {
-		Token token = stack_output.back();
-		std::string msj = "'" + token.get_lexeme() + "' not expected";
-		throw SyntacticException(msj.c_str());
-	} else {
-		Token token = stack_output.back();
-		stack_output.pop_back();
-		switch(token.get_type()) {
-			case TokenType::Not:
-				return std::make_unique<NotNode>(BuildTree());
-			case TokenType::Or:
-				return std::make_unique<OrNode>(BuildTree(), BuildTree());
-			case TokenType::And:
-				return std::make_unique<AndNode>(BuildTree(), BuildTree());
-			case TokenType::Maybe:
-				return std::make_unique<MaybeNode>(BuildTree(), BuildTree());
-			case TokenType::Xor:
-				return std::make_unique<XorNode>(BuildTree(), BuildTree());
-			default:
+	/* Consumes the RPN queue front to back with an explicit operand stack, so nesting
+	 * depth is bounded by the input's length, not the native stack, and a binary
+	 * operator's operands keep their source order (right is popped first). */
+	Operands operands;
+	for (const auto& token : stack_output) {
+		switch (token.get_type()) {
+			case TokenType::Id:
+				operands.push({std::make_unique<IdNode>(token.get_lexeme()), 1, &token});
 				break;
+			case TokenType::Not: {
+				operands.need(1);
+				auto operand = operands.pop();
+				operands.push({std::make_unique<NotNode>(std::move(operand.node)), operand.depth + 1, &token});
+				break;
+			}
+			case TokenType::Or:
+			case TokenType::And:
+			case TokenType::Maybe:
+			case TokenType::Xor: {
+				operands.need(2);
+				auto rig = operands.pop();
+				auto lef = operands.pop();
+				auto depth = std::max(lef.depth, rig.depth) + 1;
+				std::unique_ptr<BaseNode> node;
+				switch (token.get_type()) {
+					case TokenType::Or:    node = std::make_unique<OrNode>(std::move(lef.node), std::move(rig.node)); break;
+					case TokenType::And:   node = std::make_unique<AndNode>(std::move(lef.node), std::move(rig.node)); break;
+					case TokenType::Maybe: node = std::make_unique<MaybeNode>(std::move(lef.node), std::move(rig.node)); break;
+					default:               node = std::make_unique<XorNode>(std::move(lef.node), std::move(rig.node)); break;
+				}
+				operands.push({std::move(node), depth, &token});
+				break;
+			}
+			default: {
+				std::string msj = "'" + token.get_lexeme() + "' not expected";
+				throw SyntacticException(msj.c_str());
+			}
 		}
 	}
-
-	return nullptr;
+	operands.need(1);
+	if (operands.size() > 1) {
+		std::string msj = "'" + operands.at(operands.size() - 2).head->get_lexeme() + "' not expected";
+		throw SyntacticException(msj.c_str());
+	}
+	stack_output.clear();
+	auto result = operands.pop();
+	root_depth = result.depth;
+	return std::move(result.node);
 }
 
 

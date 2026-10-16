@@ -24,6 +24,8 @@
 #pragma once
 
 #include <cstdint>
+#include <memory>
+#include <vector>
 
 
 enum class NodeType : uint8_t {
@@ -41,4 +43,21 @@ public:
 	virtual ~BaseNode() = default;
 
 	virtual NodeType getType() const noexcept = 0;
+
+	// Moves this node's children into `out`, so a tree can be torn down without recursion.
+	virtual void release_children(std::vector<std::unique_ptr<BaseNode>>& out) { (void)out; }
 };
+
+
+// Destroys a tree iteratively: nesting depth is bounded by memory, not the native stack.
+inline void destroy_tree(std::unique_ptr<BaseNode> node) {
+	std::vector<std::unique_ptr<BaseNode>> pending;
+	if (node) {
+		pending.push_back(std::move(node));
+	}
+	while (!pending.empty()) {
+		auto next = std::move(pending.back());
+		pending.pop_back();
+		next->release_children(pending);
+	}
+}

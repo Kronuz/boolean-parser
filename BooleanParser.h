@@ -35,7 +35,9 @@
 class BooleanTree {
 public:
 	explicit BooleanTree(std::string_view input_);
-	~BooleanTree() = default;
+	~BooleanTree() { release_root(); }
+	BooleanTree(const BooleanTree&) = delete;
+	BooleanTree& operator=(const BooleanTree&) = delete;
 
 	std::unique_ptr<BaseNode> root;
 
@@ -79,9 +81,11 @@ public:
 private:
 	void toRPN();
 	std::unique_ptr<BaseNode> BuildTree();
+	void release_root();
 	unsigned precedence(TokenType type);
 
 	std::list<Token> stack_output;
+	std::size_t root_depth = 0;
 	std::vector<Token> stack_operator;
 
 	std::unique_ptr<Lexer> lexer;

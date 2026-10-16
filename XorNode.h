@@ -45,6 +45,11 @@ public:
 		return rig.get();
 	}
 
+	void release_children(std::vector<std::unique_ptr<BaseNode>>& out) override {
+		if (lef) { out.push_back(std::move(lef)); }
+		if (rig) { out.push_back(std::move(rig)); }
+	}
+
 	NodeType getType() const noexcept override {
 		return NodeType::XOR;
 	}

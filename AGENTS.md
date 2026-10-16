@@ -101,14 +101,13 @@ exposes the repo root as a `PUBLIC` include. The test target is
   header-naming section above: it's what lets the sources sit at the repo root
   without a macOS case-collision against a consumer's own `node.h`/`token.h`.
   Keep all sources co-located so the bare internal includes resolve.
-- **`Parse()` on malformed input can be fragile.** The tree builder's
-  dangling-operator path (e.g. `"a AND AND b"`) has a latent upstream defect: it
-  can recurse on an emptied output queue and dereference `.back()` on an empty
-  list (UB), rather than throwing cleanly. This was inherited from Xapiand and is
-  out of scope for the extraction. The test deliberately exercises the *clean*
-  error paths (unbalanced parens, unterminated quote, unclosed bracket), which
-  throw as expected. If you harden the builder, add the dangling-operator case to
-  the test.
+- **`Parse()` is iterative.** It folds the RPN queue with an explicit operand stack
+  (32 inline, then heap), popping the right operand before the left, and
+  `BooleanTree` tears deep trees down with `destroy_tree()`. Keep both: recursion
+  overflowed a 512 KiB stack near 1,000 levels, and building a node from two
+  `BuildTree()` calls in one argument list swapped MAYBE's operands under clang
+  (argument evaluation order is unspecified). Trees up to 64 deep are destroyed by
+  ordinary recursion, which keeps the common case allocation-free.
 - **`get_lexeme()` returns the raw source text.** For a quoted phrase the lexeme
   still has the quotes; for a list it still has the brackets and commas. Consumers
   that want the inner value strip the delimiters themselves. Don't silently change

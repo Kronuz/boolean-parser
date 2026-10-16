@@ -41,8 +41,8 @@ The RPN queue (a `std::list<Token>`) is exposed as a deque-like surface:
 
 ## Caveats
 
-- `Parse()` recurses once per operator, with no depth limit: deeply nested input
-  (tens of thousands of operators) can exhaust the stack. Bound the length of
-  untrusted input until a depth limit lands.
+- `Parse()` and the tree's teardown never recurse, so nesting depth is bounded by
+  memory, not the stack. Code that walks `root` recursively (like `PrintTree()`)
+  still needs its own limit for untrusted input.
 - Quoted phrases and bracket lists arrive as one `Id` whose lexeme keeps its
   quotes or brackets.

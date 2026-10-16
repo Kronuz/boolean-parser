@@ -101,16 +101,18 @@ surface: a consumer (Xapiand's query DSL) walks it front-to-back via
 
 ## Stage 4: the AST build
 
-`Parse()` calls `BuildTree()`, which folds the RPN queue into a tree by reading
-it **back-to-front** (`stack_output.back()` / `pop_back()`):
+`Parse()` calls `BuildTree()`, which folds the RPN queue into a tree **front to
+back** with an explicit operand stack:
 
-- An `Id` becomes an `IdNode` (leaf).
-- A binary operator (`And`/`Or`/`Xor`/`Maybe`) pops itself and recurses twice
-  for its two children — `OrNode(BuildTree(), BuildTree())`, and so on.
-- `Not` is unary: `NotNode(BuildTree())`.
+- An `Id` pushes an `IdNode` (leaf).
+- A binary operator (`And`/`Or`/`Xor`/`Maybe`) pops its right operand, then its
+  left, and pushes the node.
+- `Not` is unary: it pops one operand and pushes a `NotNode`.
 
-So `a b c NOT AND OR` rebuilds as `OR(a, AND(b, NOT(c)))`. After the build,
-`Parse()` checks the queue is empty; a leftover token is a `SyntacticException`.
+So `a b c NOT AND OR` builds `OR(a, AND(b, NOT(c)))`. Running out of operands, or
+ending with more than one, is a `SyntacticException`. Nothing recurses, so nesting
+is bounded by memory; `destroy_tree()` tears deep trees down the same way, and
+trees up to 64 deep use ordinary destruction.
 `PrintTree()` post-order-dumps the tree to `std::cout` for debugging.
 
 The node types (`AndNode`, `OrNode`, `NotNode`, `XorNode`, `MaybeNode`,
