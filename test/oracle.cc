@@ -5,7 +5,7 @@
 // library everywhere except the classes of input whose meaning the precedence fix
 // changes (see `changed_class`); inside that class the oracle is the authority.
 //
-// BP_MAX_LEN raises the exhaustive length of the narrow vocabulary (default 7: sanitizer CI jobs run it; 8 and 9 take minutes).
+// BP_MAX_LEN raises the exhaustive length of the narrow vocabulary (default 7, or 5 under ASan/TSan; 8 and 9 take minutes).
 #include <cstdio>
 #include <cstdlib>
 #include <random>
@@ -22,6 +22,21 @@ using oracle::Tok;
 using oracle::Shape;
 using oracle::shape_of;
 using oracle::changed_class;
+
+// Under a sanitizer every parse is an order of magnitude slower (and the CI jobs run
+// every CTest case), so the default sizes shrink; BP_MAX_LEN still overrides the length.
+#if defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_THREAD__)
+#define BP_SANITIZED 1
+#elif defined(__has_feature)
+#if __has_feature(address_sanitizer) || __has_feature(thread_sanitizer)
+#define BP_SANITIZED 1
+#endif
+#endif
+#ifdef BP_SANITIZED
+constexpr size_t default_len = 5, wide_len = 4, random_iters = 3000;
+#else
+constexpr size_t default_len = 7, wide_len = 5, random_iters = 100000;
+#endif
 
 namespace {
 
@@ -146,7 +161,7 @@ void exhaustive(const std::vector<Spell>& vocab, size_t max_len, size_t old_len)
 
 int main() {
 	using namespace oracle;
-	size_t max_len = 7;
+	size_t max_len = default_len;
 	if (const char* e = std::getenv("BP_MAX_LEN")) max_len = std::strtoul(e, nullptr, 10);
 
 	// Named cases: the three reported bugs and neighbours, with the exact expected tree.
@@ -179,14 +194,14 @@ int main() {
 		{XOR, "XOR"}, {MAYBE, "maybe"}, {LP, "("}, {RP, ")"}};
 	exhaustive(narrow, max_len, 7);
 	std::printf("narrow vocabulary, lengths 1..%zu: %zu inputs so far\n", max_len, n_checked);
-	exhaustive(wide, 5, 5);
+	exhaustive(wide, wide_len, wide_len);
 
 	// Random longer sequences: mostly well-formed shapes with implicit adjacency, some noise.
 	std::mt19937 rng(20261031);
 	auto pick = [&](const std::vector<Spell>& v) { return v[rng() % v.size()]; };
 	const std::vector<Spell> terms = {{ID, "a"}, {ID, "b"}, {ID, "c"}, {ID, "term"}};
 	const std::vector<Spell> bins = {{AND, "AND"}, {AND, "&"}, {OR, "OR"}, {OR, "|"}, {XOR, "xor"}, {MAYBE, "MAYBE"}};
-	for (int iter = 0; iter < 100000; ++iter) {
+	for (int iter = 0; iter < static_cast<int>(random_iters); ++iter) {
 		std::vector<Tok> t;
 		size_t n = 10 + rng() % 30;
 		int depth = 0;
