@@ -51,6 +51,14 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
   target_link_libraries(boolean_parser_diff PRIVATE boolean_parser)
   add_test(NAME boolean_parser_diff COMMAND boolean_parser_diff)
 
+  # Precedence oracle: an independent recursive-descent reference parser (test/oracle.h)
+  # against the library on exhaustive and random token sequences, and the frozen original
+  # against the library outside the classes the precedence fix changes.
+  add_executable(boolean_parser_oracle test/oracle.cc test/new_dump.cc $<TARGET_OBJECTS:boolean_parser_frozen>)
+  target_include_directories(boolean_parser_oracle PRIVATE test)
+  target_link_libraries(boolean_parser_oracle PRIVATE boolean_parser)
+  add_test(NAME boolean_parser_oracle COMMAND boolean_parser_oracle)
+
   # Benchmark: cmake -B build -DBOOLEAN_PARSER_BENCH=ON -DCMAKE_BUILD_TYPE=Release
   #            && cmake --build build --target boolean_parser_bench
   option(BOOLEAN_PARSER_BENCH "Build the parser benchmark" OFF)

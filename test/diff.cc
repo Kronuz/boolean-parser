@@ -7,16 +7,59 @@
 #include <string>
 #include <vector>
 
+#include "BooleanLexer.h"
+#include "LexicalException.h"
+#include "oracle.h"
+
 std::string old_dump(std::string_view input);
 std::string new_dump(std::string_view input);
 
 static size_t checked = 0, errors = 0, trees = 0;
 
+static size_t deliberate = 0;
+
+static bool has_exception(const std::string& d) { return d.find("Exception") != std::string::npos; }
+
+// The precedence fix changes the result for a defined class of inputs (see oracle.h,
+// `changed_class`); the lexer is untouched, so classify by the lexer's tokens. Inside
+// the class, the independent oracle decides what the right result is.
+static bool deliberate_difference(const std::string& in, const std::string& b) {
+	std::vector<oracle::Tok> toks;
+	try {
+		std::string text(in.c_str());  // the lexer stops at an embedded NUL
+		Lexer lexer(text.data());
+		for (;;) {
+			Token t = lexer.NextToken();
+			using T = TokenType;
+			oracle::Kind k;
+			switch (t.get_type()) {
+				case T::EndOfFile: goto done;
+				case T::Id: k = oracle::ID; break;
+				case T::Not: k = oracle::NOT; break;
+				case T::Or: k = oracle::OR; break;
+				case T::And: k = oracle::AND; break;
+				case T::Maybe: k = oracle::MAYBE; break;
+				case T::Xor: k = oracle::XOR; break;
+				case T::LeftParenthesis: k = oracle::LP; break;
+				default: k = oracle::RP; break;
+			}
+			toks.push_back({k, t.get_lexeme()});
+		}
+	} catch (const LexicalException&) {
+		return false;
+	}
+done:
+	auto want = oracle::parse(toks);
+	if (want.ok == has_exception(b) || (want.ok && b != oracle::dump(want))) { return false; }
+	return oracle::changed_class(oracle::shape_of(toks, true)) || !want.ok;
+}
+
 static void check(const std::string& in) {
 	auto a = old_dump(in);
 	auto b = new_dump(in);
 	++checked;
-	if (a.find("Exception") != std::string::npos) { ++errors; } else { ++trees; }
+	if (has_exception(a)) { ++errors; } else { ++trees; }
+	if (a != b && deliberate_difference(in, b)) { ++deliberate; return; }
 	if (a != b) {
 		std::fprintf(stderr, "MISMATCH for input [%s] (len %zu)\n--- old ---\n%s\n--- new ---\n%s\n", in.c_str(), in.size(), a.c_str(), b.c_str());
 		std::abort();
@@ -96,6 +139,7 @@ int main() {
 		check(nest + "a" + std::string(500, ')'));
 		check(nest + "a" + std::string(499, ')'));
 	}
-	std::printf("boolean differential OK: %zu inputs (%zu parse, %zu error) identical to the frozen original\n", checked, trees, errors);
+	std::printf("boolean differential OK: %zu inputs (%zu parse, %zu error); %zu differ from the frozen original only inside the\n"
+	            "deliberately changed precedence classes, where the library equals the oracle; all others identical\n", checked, trees, errors, deliberate);
 	return 0;
 }

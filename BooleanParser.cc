@@ -235,24 +235,39 @@ void
 BooleanTree::toRPN()
 {
 	currentToken = lexer.NextToken();
-	bool last_token_is_id = false;
+	// True right after an operand ends (an Id or a closing parenthesis): a term, an
+	// opening parenthesis or NOT that follows is joined to it by the implicit operator.
+	bool operand_ended = false;
+
+	// Pops every operator that binds at least as tightly as `type` (a parenthesis never
+	// does), which makes the binary operators left associative.
+	auto pop_tighter = [&](TokenType type) {
+		while (!stack_operator.empty() && precedence(type) >= precedence(stack_operator.back().get_type())) {
+			stack_output.push_back(std::move(stack_operator.back()));
+			stack_operator.pop_back();
+		}
+	};
+	// The implicit operator is emitted before the operand that follows it, after popping
+	// the operators that bind tighter, so `a & b c` is `(a & b) | c`.
+	auto implicit_operator = [&]() {
+		if (operand_ended) {
+			pop_tighter(DEFAULT_OPERATOR);
+			stack_operator.emplace_back(DEFAULT_OPERATOR);
+		}
+	};
 
 	while (currentToken.get_type() != TokenType::EndOfFile) {
 		switch (currentToken.get_type()) {
 			case TokenType::Id:
+				implicit_operator();
 				stack_output.push_back(std::move(currentToken));
-				if (last_token_is_id) {
-					while (!stack_operator.empty() && precedence(DEFAULT_OPERATOR) > precedence(stack_operator.back().get_type())) {
-						stack_output.push_back(std::move(stack_operator.back()));
-						stack_operator.pop_back();
-					}
-					stack_operator.emplace_back(DEFAULT_OPERATOR);
-				}
-				last_token_is_id = true;
+				operand_ended = true;
 				break;
 
 			case TokenType::LeftParenthesis:
+				implicit_operator();
 				stack_operator.push_back(std::move(currentToken));
+				operand_ended = false;
 				break;
 
 			case TokenType::RightParenthesis:
@@ -270,19 +285,23 @@ BooleanTree::toRPN()
 						throw SyntacticException(msj.c_str());
 					}
 				}
+				operand_ended = true;
 				break;
 
 			case TokenType::Not:
+				// Prefix operator: it pops nothing, so `NOT NOT a` nests.
+				implicit_operator();
+				stack_operator.push_back(std::move(currentToken));
+				operand_ended = false;
+				break;
+
 			case TokenType::Or:
 			case TokenType::And:
 			case TokenType::Maybe:
 			case TokenType::Xor:
-				while (!stack_operator.empty() && precedence(currentToken.get_type()) > precedence(stack_operator.back().get_type())) {
-					stack_output.push_back(std::move(stack_operator.back()));
-					stack_operator.pop_back();
-				}
+				pop_tighter(currentToken.get_type());
 				stack_operator.push_back(std::move(currentToken));
-				last_token_is_id = false;
+				operand_ended = false;
 				break;
 
 			case TokenType::EndOfFile:

@@ -62,6 +62,38 @@ int main() {
 [`examples/demo.cc`](examples/demo.cc) prints the RPN stream and the AST, drawn as
 a tree, for a handful of expressions.
 
+## 🧮 Grammar and precedence
+
+`NOT` binds tightest, then `AND`, `MAYBE`, `XOR`, and `OR` loosest. Every binary
+operator is left associative, and parentheses group. Two operands with no operator
+between them (a term, a `)`, then a term, `(` or `NOT`) are joined by an implicit `OR`,
+which has the loosest precedence like an explicit one:
+
+| input | parses as |
+|---|---|
+| `a & b c` | `(a AND b) OR c` |
+| `x AND a b` | `(x AND a) OR b` |
+| `NOT a b` | `(NOT a) OR b` |
+| `a b & c` | `a OR (b AND c)` |
+| `a b NOT c` | `(a OR b) OR (NOT c)` |
+| `a & b & c` | `(a AND b) AND c` |
+
+> **Behavior change.** Earlier versions emitted a term before popping the operators
+> that bind tighter than the implicit `OR`, so `a & b c` was `a OR (b AND c)`, `x AND a b`
+> was `x OR (a AND b)` and `NOT a b` was `a OR (NOT b)`. Equal-precedence chains also
+> grouped to the right (`a | b | c` was `a | (b | c)`; same truth table for `AND`,
+> `OR` and `XOR`, a different RPN queue and tree, and a different meaning for `MAYBE`).
+> A term, `(` or `NOT` after a term or `)` takes the implicit `OR` now: `a NOT b` and
+> `a ( NOT b )` used to be rejected, and `a ( b ) & c` was `(a OR b) AND c`. Malformed
+> input the old queue accepted by dropping operands (`a NOT` as `NOT a`, `a ()` as `a`,
+> `( ) a`, `a ( NOT )`) is rejected. Messages for rejected input may name a different
+> token. Inputs with no implicit operator next to another operator and no repeated
+> same-level operator parse exactly as before.
+
+`test/oracle.cc` checks this grammar against an independent recursive-descent parser
+on every token sequence over a small vocabulary up to length 8 (9 with `BP_MAX_LEN=9`)
+and on random longer ones.
+
 ## 🎯 When to use it
 
 - ✅ Parsing user-facing boolean query syntax into a structure you evaluate.
@@ -80,8 +112,9 @@ a tree, for a handful of expressions.
 
 The lexer scans the input by pointer and builds each lexeme with one allocation (none
 up to the small-string size); tokens are moved through the shunting-yard and the
-output queue is a vector with a head index (one allocation). The RPN queue and trees are identical to before
-(`test/diff.cc` compares 140,000 inputs against the original sources). See
+output queue is a vector with a head index (one allocation). Apart from the precedence fix above, the RPN queue and trees are identical to before
+(`test/diff.cc` compares 140,000 inputs against the original sources, listing every
+deliberate difference). See
 `bench/bench_bool.cc` (`-DBOOLEAN_PARSER_BENCH=ON`).
 
 ## 🛠️ Building and testing

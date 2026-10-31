@@ -11,7 +11,8 @@ easy to fall into.
 BooleanParser.{h,cc}           BooleanTree: ctor lexes + shunting-yards to RPN; Parse() builds the AST. The only .cc with public API.
 BooleanLexer.{h,cc}            The lexer state machine: tokens, quotes, [a,b,c] lists, symbolic ops.
 ContentReader.{h,cc}           Byte-at-a-time reader (tracks line/column). Kept for API compatibility; the lexer no longer uses it (it reads the buffer by pointer and reproduces its "\n\r" pair rule).
-test/diff.cc                   Differential test (CTest `boolean_parser_diff`) against test/frozen, the original sources compiled with `Old`-prefixed names.
+test/diff.cc                   Differential test (CTest `boolean_parser_diff`) against test/frozen, the original sources compiled with `Old`-prefixed names; deliberate differences are limited to the precedence-fix classes.
+test/oracle.{h,cc}             Reference recursive-descent parser and the exhaustive/random oracle test (CTest `boolean_parser_oracle`; BP_MAX_LEN=9 for the deepest run).
 bench/bench_bool.cc            Benchmark vs the frozen original and an arena precedence-climbing parser (cmake -DBOOLEAN_PARSER_BENCH=ON).
 BooleanToken.h                 Token + TokenType (Not/Or/And/Maybe/Xor/parens/Id/EndOfFile). Header.
 BooleanNode.h                  BaseNode + NodeType. Header.
@@ -83,11 +84,11 @@ exposes the repo root as a `PUBLIC` include. The test target is
   without understanding that the main consumer depends on exactly this.
 - **Operator precedence is `NOT > AND > MAYBE > XOR > OR`.** Encoded in
   `BooleanTree::precedence` as `Not=0, And=1, Maybe=2, Xor=3, Or=4` (lower binds
-  tighter). The shunting-yard pops while `precedence(current) >
-  precedence(top)`. The test pins the whole ladder; changing a number changes
+  tighter). The shunting-yard pops while `precedence(current) >=
+  precedence(top)` (left associative; `NOT` pops nothing, being prefix). The test pins the whole ladder; changing a number changes
   every query's meaning.
 - **Two adjacent ids default-join with `OR`** (`DEFAULT_OPERATOR` in
-  `BooleanParser.cc`). `"a b"` parses as `a b OR`. The test pins this.
+  `BooleanParser.cc`). `"a b"` parses as `a b OR`, and the implicit `OR` obeys precedence like an explicit one. The oracle test pins this.
 - **Quoted phrases and `[a,b,c]` lists are a single `Id` token** whose lexeme
   keeps its delimiters. The lexer's `TOKEN_QUOTE` / `INIT_SQUARE_BRACKET` /
   `END_SQUARE_BRACKET` states implement this; the test pins both.
@@ -97,21 +98,15 @@ exposes the repo root as a `PUBLIC` include. The test target is
   `.c_str()`; a borrowed pointer dangled the moment the throw unwound the frame.
   Don't revert it to a borrowed pointer.
 
-## Known quirk: implicit OR after a binary operator (owner decision pending)
+## Implicit OR and associativity
 
-`toRPN` outputs an `Id` *before* it pops the operators that bind tighter than the
-implicit `OR`, so an implicit `OR` regroups the operands around it:
-
-| input | tree today | tree if the `OR` were emitted first |
-|---|---|---|
-| `a & b c` | `a OR (b AND c)` | `(a AND b) OR c` |
-| `x AND a b` | `x OR (a AND b)` | `(x AND a) OR b` |
-| `NOT a b` | `a OR (NOT b)` | `(NOT a) OR b` |
-
-(The middle column is the library's output, verbatim.)
-Chains of implicit `OR` (`a b c`) and `a OR b c` are unaffected. The rewrite preserves
-this exactly (`test/diff.cc` compares every such input with the original sources);
-fixing it changes query meaning, so it is an owner decision.
+Fixed (see the README's "Behavior change"). `toRPN` emits the implicit `OR` before
+the term that follows it, after popping the operators that bind at least as tightly,
+so `a & b c` is `(a AND b) OR c` and `NOT a b` is `(NOT a) OR b`. Binary operators are
+left associative. A term, `(` or `NOT` right after a term or `)` takes the implicit `OR`.
+`test/oracle.cc` pins all of it against the reference parser in `test/oracle.h`, and
+`test/diff.cc` lists the input classes that differ from the frozen original
+(`oracle.h`, `changed_class`).
 
 ## Traps
 

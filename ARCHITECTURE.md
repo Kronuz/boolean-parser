@@ -73,12 +73,14 @@ commas*. Stripping delimiters is the consumer's job.
 maintains two structures: `stack_output` (a `std::vector<Token>` with a head index, the growing RPN
 queue; one allocation instead of a heap node per token) and `stack_operator` (a `std::vector<Token>`, the operator stack).
 
-- An `Id` is appended straight to the output queue. If the previous token was
-  also an `Id` (two adjacent terms with no operator), a default operator
-  (`DEFAULT_OPERATOR` = `Or`) is injected between them, respecting precedence —
-  so `"a b"` becomes `a b OR`.
-- An operator pops higher-or-equal-binding operators off the stack into the
-  output, then pushes itself. Binding is decided by `precedence()`:
+- An `Id` goes to the output queue. When it follows an operand (an `Id` or `)`), the
+  default operator (`DEFAULT_OPERATOR` = `Or`) is first pushed as if written, after
+  popping every operator that binds at least as tightly, so `"a b"` becomes `a b OR` and
+  `a & b c` becomes `a b & c OR`. A `(` or `NOT` after an operand gets the same implicit
+  operator.
+- A binary operator pops the operators that bind at least as tightly (left
+  associative), then pushes itself; `NOT` is prefix and pops nothing. Binding is
+  decided by `precedence()`:
 
   ```
     Not = 0   (binds tightest)
@@ -88,9 +90,8 @@ queue; one allocation instead of a heap node per token) and `stack_operator` (a 
     Or = 4    (binds loosest)
   ```
 
-  The pop condition is `precedence(current) > precedence(top)` — i.e. pop while
-  the stack top binds at least as tightly. So `NOT` > `AND` > `MAYBE` > `XOR` >
-  `OR`.
+  The pop condition is `precedence(current) >= precedence(top)`. So `NOT` > `AND` >
+  `MAYBE` > `XOR` > `OR`.
 - `(` is pushed; `)` pops operators into the output until the matching `(`,
   throwing `SyntacticException` if no `(` is found (unbalanced parens).
 - At EOF, any operators left on the stack are flushed to the output.
