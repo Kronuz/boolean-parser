@@ -10,8 +10,8 @@ easy to fall into.
 ```
 BooleanParser.{h,cc}           BooleanTree: ctor lexes + shunting-yards to RPN; Parse() builds the AST. The only .cc with public API.
 BooleanLexer.{h,cc}            The lexer state machine: tokens, quotes, [a,b,c] lists, symbolic ops.
-ContentReader.{h,cc}           Byte-at-a-time reader (tracks line/column). Kept for API compatibility; the lexer no longer uses it (it reads the buffer by pointer and reproduces its "\n\r" pair rule).
-test/diff.cc                   Differential test (CTest `boolean_parser_diff`) against test/frozen, the original sources compiled with `Old`-prefixed names; deliberate differences are limited to the precedence-fix classes.
+ContentReader.{h,cc}           Byte-at-a-time reader (tracks line/column). Kept for API compatibility; the lexer does not use it (it reads the buffer by pointer and applies the same "\n\r" pair rule).
+test/diff.cc                   Differential test (CTest `boolean_parser_diff`) against test/frozen, the original sources compiled with `Old`-prefixed names; the two differ only in the precedence classes of test/oracle.h `changed_class`.
 test/oracle.{h,cc}             Reference recursive-descent parser and the exhaustive/random oracle test (CTest `boolean_parser_oracle`; BP_MAX_LEN=9 for the deepest run, default 7).
 bench/bench_bool.cc            Benchmark vs the frozen original and an arena precedence-climbing parser (cmake -DBOOLEAN_PARSER_BENCH=ON).
 BooleanToken.h                 Token + TokenType (Not/Or/And/Maybe/Xor/parens/Id/EndOfFile). Header.
@@ -20,8 +20,9 @@ And/Or/Not/Xor/Maybe/IdNode.h  The AST node types. Headers.
 LexicalException.h             Lexer error; owns a std::string. Header.
 SyntacticException.h           Parser error; owns a std::string. Header.
 test/test.cc                   Runnable smoke test: RPN token stream, precedence, quoting, lists, AST shape, error throws.
-CMakeLists.txt                 STATIC library `boolean_parser` (+ alias boolean_parser::boolean_parser); CTest test `boolean_parser`.
-LICENSE                        MIT, Copyright (c) 2015-2019 Dubalu LLC.
+CMakeLists.txt                 STATIC library `boolean_parser` (+ alias boolean_parser::boolean_parser); CTest tests `boolean_parser`, `_diff`, `_oracle`.
+LICENSE                        MIT, Copyright (c) 2026 Germán Méndez Bravo and (c) 2015-2020 Dubalu LLC.
+CHANGELOG.md                   Behavior and performance changes, dated.
 README.md                      What it is, install, quick start.
 docs/API.md                    The API reference and caveats.
 docs/boolean-parser.d2         The README diagram's source (docs/boolean-parser.svg is rendered from it).
@@ -30,21 +31,21 @@ ARCHITECTURE.md                Internal design: the lexer, the shunting-yard, th
 
 Three `.cc`s are compiled into the library (`BooleanParser.cc`, `BooleanLexer.cc`,
 `ContentReader.cc`); everything else is a header. There are **no external
-dependencies** — only the C++ standard library.
+dependencies**, only the C++ standard library.
 
 ## Header naming avoids a case-insensitive collision
 
 The sources sit at the repo root, and the library exposes the root as its include
 directory, so the public header is reached as `BooleanParser.h`. The three most
-generic header names carry a `Boolean` prefix — `BooleanNode.h`, `BooleanToken.h`,
-`BooleanLexer.h` — on purpose:
+generic header names carry a `Boolean` prefix on purpose (`BooleanNode.h`,
+`BooleanToken.h`, `BooleanLexer.h`):
 
 - A root-level `Node.h`/`Token.h`/`Lexer.h` would collide on a case-insensitive
   filesystem (macOS) with a consumer's own lowercase `node.h`/`token.h` on the
   same include path (Xapiand has a `node.h`). The prefix keeps them unambiguous
   without needing a subdirectory.
 - The sources include **each other** with bare paths (`#include "BooleanLexer.h"`,
-  `#include "BooleanNode.h"`). Those resolve because the files are co-located —
+  `#include "BooleanNode.h"`). Those resolve because the files are co-located:
   the compiler finds a sibling header relative to the including file. Keep them
   together; don't split headers into a separate `include/` tree or the bare
   includes break.
@@ -67,7 +68,7 @@ exposes the repo root as a `PUBLIC` include. The test target is
   C++20 features without bumping the standard (and the reason to).
 - **No external dependencies.** The only includes are the C++ standard library
   and the parser's own co-located headers. There are no Xapiand headers, no
-  logging/format/MsgPack coupling — keep it that way (see "Standalone vs.
+  logging/format/MsgPack coupling. Keep it that way (see "Standalone vs.
   Xapiand").
 - **Errors are the parser's own two exception types.** `LexicalException` from
   the lexer, `SyntacticException` from the shunting-yard / tree builder. Both are
@@ -92,21 +93,20 @@ exposes the repo root as a `PUBLIC` include. The test target is
 - **Quoted phrases and `[a,b,c]` lists are a single `Id` token** whose lexeme
   keeps its delimiters. The lexer's `TOKEN_QUOTE` / `INIT_SQUARE_BRACKET` /
   `END_SQUARE_BRACKET` states implement this; the test pins both.
-- **Both exceptions own their message `std::string`.** `SyntacticException` was
-  changed from a bare `const char*` to an owned `std::string` precisely because
-  every throw site builds the message from a temporary `std::string` and passes
-  `.c_str()`; a borrowed pointer dangled the moment the throw unwound the frame.
-  Don't revert it to a borrowed pointer.
+- **Both exceptions own their message `std::string`.** Every throw site builds
+  the message in a temporary `std::string` and passes `.c_str()`, so a borrowed
+  `const char*` dangles the moment the throw unwinds the frame. Don't make either
+  exception borrow its message.
 
 ## Implicit OR and associativity
 
-Fixed (see the README's "Behavior change"). `toRPN` emits the implicit `OR` before
+`toRPN` emits the implicit `OR` before
 the term that follows it, after popping the operators that bind at least as tightly,
 so `a & b c` is `(a AND b) OR c` and `NOT a b` is `(NOT a) OR b`. Binary operators are
 left associative. A term, `(` or `NOT` right after a term or `)` takes the implicit `OR`.
 `test/oracle.cc` pins all of it against the reference parser in `test/oracle.h`, and
 `test/diff.cc` lists the input classes that differ from the frozen original
-(`oracle.h`, `changed_class`).
+(`oracle.h`, `changed_class`). `CHANGELOG.md` has the old behavior.
 
 ## Traps
 
@@ -133,19 +133,16 @@ left associative. A term, `(` or `NOT` right after a term or `)` takes the impli
 ## Standalone vs. Xapiand
 
 This is a standalone extraction from
-[Xapiand](https://github.com/Kronuz/Xapiand). The delta from the original is
-pure decoupling:
+[Xapiand](https://github.com/Kronuz/Xapiand). It differs from upstream in these
+ways, each listed with its date in `CHANGELOG.md`:
 
-- `BooleanParser.h` dropped `#include "xapian.h"` and the dead
-  `Xapian::Query get_query();` method declaration. That method was never defined
-  and never called anywhere (Xapiand's `query_dsl.cc` consumes only the RPN token
-  queue, plus the two exception types — never the AST or any Xapian type), so its
-  removal eliminated 100% of the Xapiand coupling with no behavior change.
-- `SyntacticException` was hardened from a borrowed `const char*` to an owned
-  `std::string` (matching `LexicalException`), fixing a dangling-pointer bug at
-  every throw site. Behavior-neutral for well-formed input; correct for the error
-  paths.
+- `BooleanParser.h` has no `#include "xapian.h"` and no `get_query()`
+  declaration. Xapiand's `query_dsl.cc` uses only the RPN token queue and the two
+  exception types, never the AST or any Xapian type.
+- `SyntacticException` owns its message.
+- The lexer scans by pointer, tokens move, and the RPN queue is a vector.
+- The implicit `OR` obeys precedence and binary operators are left associative.
 
-The lexer, the shunting-yard, the AST, and the precedence table are otherwise
-byte-for-byte the Xapiand originals. Keep extraction hygiene separate from
-behavior changes so they can be reconciled with upstream.
+`test/frozen` keeps the Xapiand originals for the differential test. Keep
+extraction hygiene separate from behavior changes so they can be reconciled with
+upstream.

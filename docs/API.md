@@ -4,12 +4,12 @@
 
 The whole public surface.
 
-- `explicit BooleanTree(std::string_view input)` — lexes `input` and builds the
+- `explicit BooleanTree(std::string_view input)`: lexes `input` and builds the
   RPN token queue, in the constructor. May throw `LexicalException` /
   `SyntacticException` for malformed input.
-- `void Parse()` — consume the RPN queue to build the AST into `root`. May throw
+- `void Parse()`: consume the RPN queue to build the AST into `root`. May throw
   `SyntacticException`. `root` is a `std::unique_ptr<BaseNode>`.
-- `void PrintTree()` — debug-dump the AST (post-order) to `std::cout`.
+- `void PrintTree()`: debug-dump the AST (post-order) to `std::cout`.
 
 The RPN queue (a vector with a moving head) is exposed as a deque-like surface:
 
@@ -19,9 +19,9 @@ The RPN queue (a vector with a moving head) is exposed as a deque-like surface:
 
 ## `Token` / `TokenType`
 
-- `TokenType get_type()` — one of `Not`, `Or`, `And`, `Maybe`, `Xor`,
+- `TokenType get_type()`: one of `Not`, `Or`, `And`, `Maybe`, `Xor`,
   `LeftParenthesis`, `RightParenthesis`, `Id`, `EndOfFile`.
-- `const std::string& get_lexeme()` — the source text (for an `Id`, the term;
+- `const std::string& get_lexeme()`: the source text (for an `Id`, the term;
   quotes and brackets preserved).
 
 ## AST nodes (`BooleanNode.h` + the `*BooleanNode.h` headers)
@@ -34,9 +34,9 @@ The RPN queue (a vector with a moving head) is exposed as a deque-like surface:
 
 ## Exceptions
 
-- `LexicalException` — thrown by the lexer. Owns a `std::string`; `what()` is the
+- `LexicalException`: thrown by the lexer. Owns a `std::string`; `what()` is the
   message.
-- `SyntacticException` — thrown by the shunting-yard / tree builder. Owns a
+- `SyntacticException`: thrown by the shunting-yard / tree builder. Owns a
   `std::string`; `what()` is the message.
 
 ## Caveats

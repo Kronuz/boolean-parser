@@ -64,7 +64,7 @@ struct StopTable {
 constexpr StopTable stop_table;
 
 // The lexeme of the symbols consumed from `start` up to `end`: the bytes in between,
-// except that the second byte of a "\n\r" or "\r\n" pair was skipped by the reader.
+// except the second byte of a "\n\r" or "\r\n" pair, which the reader rule skips.
 std::string
 make_lexeme(const char* start, const char* end, bool saw_newline)
 {

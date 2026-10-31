@@ -12,13 +12,13 @@ run in the constructor; the fourth is `Parse()`, called on demand.
 ```
   input string
       │
-      ▼  Lexer                — a state machine over the buffer, grouping bytes into Tokens
+      ▼  Lexer: a state machine over the buffer, grouping bytes into Tokens
   token stream
       │
-      ▼  toRPN() (shunting-yard) — reorder into Reverse Polish notation
+      ▼  toRPN() (shunting-yard): reorder into Reverse Polish notation
   RPN token queue  ──────────────────────────────►  (consumable directly)
       │
-      ▼  Parse() → BuildTree()   — fold the RPN queue into a node tree
+      ▼  Parse() → BuildTree(): fold the RPN queue into a node tree
   AST (root)
 ```
 
@@ -27,8 +27,8 @@ run in the constructor; the fourth is `Parse()`, called on demand.
 The constructor copies the input into an owned NUL-terminated `char[]` buffer (so a
 transient `std::string_view` argument is safe). The lexer holds pointers into it
 (`cs`, `pos`) and peeks one symbol ahead; `'\0'` is the end of input. Like
-`ContentReader` (which stays in the repo for API compatibility but the lexer no
-longer uses), it treats a `"\n\r"` or `"\r\n"` pair as one symbol, so the second byte
+`ContentReader` (which stays in the repo for API compatibility; the lexer does not
+use it), it treats a `"\n\r"` or `"\r\n"` pair as one symbol, so the second byte
 of a pair never reaches a lexeme. A lexeme is not built byte by byte: it is the run
 of bytes from its first symbol up to the current one, copied once with a single
 `std::string` construction when the token is returned (plain runs inside a bare
@@ -40,30 +40,30 @@ token or a quoted string are skipped in a tight loop).
 until it has one whole `Token`. Tokens and their lexemes are moved, not copied,
 through the shunting-yard and into the `IdNode`. The states:
 
-- `INIT` — skip whitespace; dispatch on the first significant char. `(` `)` `&`
+- `INIT`: skip whitespace; dispatch on the first significant char. `(` `)` `&`
   `|` `!` go to `SYMBOL_OP` (single-char operators); `"` / `'` open a quote; `[`
   opens a list; anything else starts a bare `TOKEN`.
-- `TOKEN` — accumulate an identifier until a symbol-op, space, or EOF ends it. A
+- `TOKEN`: accumulate an identifier until a symbol-op, space, or EOF ends it. A
   quote mid-token switches into `TOKEN_QUOTE`. A token over 1024 chars throws
   `LexicalException`.
-- `TOKEN_QUOTE` — copy everything (including spaces) up to the matching quote
+- `TOKEN_QUOTE`: copy everything (including spaces) up to the matching quote
   char; `\` enters `ESCAPE` for one char; EOF before the close throws
   `LexicalException`. The quote characters are kept in the lexeme.
-- `ESCAPE` — take the next char literally, back to `TOKEN_QUOTE`.
-- `INIT_SQUARE_BRACKET` / `END_SQUARE_BRACKET` — the `[a,b,c]` list: accumulate
+- `ESCAPE`: take the next char literally, back to `TOKEN_QUOTE`.
+- `INIT_SQUARE_BRACKET` / `END_SQUARE_BRACKET`: the `[a,b,c]` list. Accumulate
   list items (each of which may itself be quoted), accept `,` to continue and
   `]` to finish, throw `LexicalException` on a missing `]`. The whole `[...]`
   becomes one lexeme.
-- `SYMBOL_OP` — map the single char to its `TokenType` (`(`→LeftParenthesis,
+- `SYMBOL_OP`: map the single char to its `TokenType` (`(`→LeftParenthesis,
   `)`→RightParenthesis, `&`→And, `|`→Or, `!`→Not).
-- `EOFILE` — emit an `EndOfFile` token.
+- `EOFILE`: emit an `EndOfFile` token.
 
 When a bare `TOKEN` completes, `IsStringOperator()` checks whether the lexeme is
 a keyword (`AND`, `OR`, `NOT`, `XOR`, `MAYBE`, case-insensitive) and, if so,
 retypes the token from `Id` to the matching operator. So keywords and their
 symbolic forms (`AND` vs `&`) converge on the same `TokenType`.
 
-The upshot: an `Id` token's lexeme is the raw source text — a bare term, a
+The upshot: an `Id` token's lexeme is the raw source text: a bare term, a
 quoted phrase *with its quotes*, or a `[a,b,c]` list *with its brackets and
 commas*. Stripping delimiters is the consumer's job.
 
@@ -127,24 +127,22 @@ per-node child getters.
 Two exception types, both plain `std::exception` subclasses owning a
 `std::string` message:
 
-- `LexicalException` — from the lexer: unterminated quote, unclosed `[`,
+- `LexicalException`, from the lexer: unterminated quote, unclosed `[`,
   oversized token, an EOF where a close was expected.
-- `SyntacticException` — from the shunting-yard (`)` with no matching `(`) and
+- `SyntacticException`, from the shunting-yard (`)` with no matching `(`) and
   from `Parse()` (an unexpected leftover token).
 
 Because lexing and the shunting-yard run in the constructor, a malformed input
 throws at construction. `Parse()` can throw later for a structurally invalid RPN
 queue.
 
-`SyntacticException` originally borrowed a `const char*`, which dangled because
-every throw site builds its message in a local `std::string` and passes
-`.c_str()`. It now owns a `std::string` (matching `LexicalException`), so the
-message stays valid after the stack unwinds — the one behavior fix made during
-extraction.
+Every throw site builds its message in a local `std::string` and passes
+`.c_str()`, so both exceptions copy it into a `std::string` they own. The message
+stays valid after the stack unwinds.
 
 ## What this is not
 
 There is no evaluation, no optimization, and no query backend here. The parser
 produces an RPN token queue and (optionally) an AST; turning those into an actual
 query is the consumer's job. In Xapiand the query DSL walks the RPN queue to
-assemble Xapian queries — that lived outside this code and stayed in Xapiand.
+assemble Xapian queries; that code lives in Xapiand.

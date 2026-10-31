@@ -78,18 +78,6 @@ which has the loosest precedence like an explicit one:
 | `a b NOT c` | `(a OR b) OR (NOT c)` |
 | `a & b & c` | `(a AND b) AND c` |
 
-> **Behavior change.** Earlier versions emitted a term before popping the operators
-> that bind tighter than the implicit `OR`, so `a & b c` was `a OR (b AND c)`, `x AND a b`
-> was `x OR (a AND b)` and `NOT a b` was `a OR (NOT b)`. Equal-precedence chains also
-> grouped to the right (`a | b | c` was `a | (b | c)`; same truth table for `AND`,
-> `OR` and `XOR`, a different RPN queue and tree, and a different meaning for `MAYBE`).
-> A term, `(` or `NOT` after a term or `)` takes the implicit `OR` now: `a NOT b` and
-> `a ( NOT b )` used to be rejected, and `a ( b ) & c` was `(a OR b) AND c`. Malformed
-> input the old queue accepted by dropping operands (`a NOT` as `NOT a`, `a ()` as `a`,
-> `( ) a`, `a ( NOT )`) is rejected. Messages for rejected input may name a different
-> token. Inputs with no implicit operator next to another operator and no repeated
-> same-level operator parse exactly as before.
-
 `test/oracle.cc` checks this grammar against an independent recursive-descent parser
 on every token sequence over a small vocabulary up to length 7 (8 and 9 with `BP_MAX_LEN`)
 and on random longer ones.
@@ -107,15 +95,22 @@ and on random longer ones.
 - [ARCHITECTURE.md](ARCHITECTURE.md): the lexer, the shunting-yard, and the tree
   builder.
 - [AGENTS.md](AGENTS.md): repository map, invariants, and traps.
+- [CHANGELOG.md](CHANGELOG.md): what changed, and when.
 
 ## ⚡ Performance
 
-The lexer scans the input by pointer and builds each lexeme with one allocation (none
-up to the small-string size); tokens are moved through the shunting-yard and the
-output queue is a vector with a head index (one allocation). Apart from the precedence fix above, the RPN queue and trees are identical to before
-(`test/diff.cc` compares 140,000 inputs against the original sources, listing every
-deliberate difference). See
-`bench/bench_bool.cc` (`-DBOOLEAN_PARSER_BENCH=ON`).
+The lexer scans the input by pointer and builds each lexeme with one allocation
+(none up to the small-string size). Tokens move through the shunting-yard, and
+the output queue is a vector with a head index (one allocation).
+`bench/bench_bool.cc` times it against the frozen Xapiand original and a
+precedence-climbing parser:
+
+```sh
+cmake -B build -DBOOLEAN_PARSER_BENCH=ON -DCMAKE_BUILD_TYPE=Release
+cmake --build build && ./build/boolean_parser_bench
+```
+
+[CHANGELOG.md](CHANGELOG.md) has the before and after timings.
 
 ## 🛠️ Building and testing
 

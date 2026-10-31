@@ -146,27 +146,27 @@ inline std::string dump(const Result& r) {
 }
 
 
-// ---- the classes of input whose result the fix changes ----
+// ---- the classes of input where the frozen original and the library differ ----
 // An implicit operator sits between an operand's end (a term or ")") and an operand's
 // start (a term, "(" or NOT); it counts as a binary OR. The changed classes, by token
 // structure alone (no use of either parser):
 //  (1) associativity: in a paren group, a binary operator follows an earlier one of the
 //      same level with only tighter operators between them (`a | b | c`, `a | b & c | d`).
-//      The old queue grouped such chains to the right.
+//      The frozen original groups such chains to the right.
 //  (2) implicit-operator placement: an implicit operator comes after any earlier operator
-//      (binary, implicit or NOT) of the same paren group (`a & b c`, `NOT a b`). The old
-//      queue emitted the next term before popping the operators that bind tighter.
-//  (3) an implicit operator in front of NOT (`a NOT b`) or "(" (`a ( b ) & c`): the old
-//      queue never inserted the first, and put the second inside the group.
-//  (4) malformed input the old queue accepted (see check()): the oracle rejects it.
-// Outside these classes the old and new results are identical. Inside, both accepted
-// results must differ (the test requires it), and the new one equals the oracle.
+//      (binary, implicit or NOT) of the same paren group (`a & b c`, `NOT a b`). The frozen
+//      original emits the next term before popping the operators that bind tighter.
+//  (3) an implicit operator in front of NOT (`a NOT b`) or "(" (`a ( b ) & c`): the frozen
+//      original inserts no operator before NOT, and puts the one before "(" inside the group.
+//  (4) malformed input the frozen original accepts (see check()): the oracle rejects it.
+// Outside these classes the frozen and library results are identical. Inside, two accepted
+// results must differ (the test requires it), and the library's equals the oracle.
 //
-// An implicit operator in front of "(" is special: the old queue emitted it inside the
+// An implicit operator in front of "(" is special: the frozen original emits it inside the
 // group, which is equivalent in some contexts (`a ( b ) c`) and not in others
 // (`a ( b ) & c`, `a ( NOT b )`). `wide` counts it as an operator and is the class
 // outside which results must be identical; `sure` ignores it and is the subset in which
-// the old and new results must differ.
+// the frozen and library results must differ.
 struct Shape {
 	bool assoc = false, placement = false, before_not = false, implicit = false, maybe = false;
 };

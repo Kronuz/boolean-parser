@@ -82,7 +82,7 @@ static std::string gen(int terms, std::mt19937& rng, bool quoted) {
 	std::string s; int depth = 0;
 	for (int i = 0; i < terms; ++i) {
 		bool neg = rng() % 8 == 0, par = rng() % 6 == 0 && depth < 4;
-		if (i) { const char* o = ops[rng() % 7]; if (!strcmp(o, " ")) o = " OR "; s += o; }  /* implicit OR is spelled out here to keep the old and new inputs comparable */
+		if (i) { const char* o = ops[rng() % 7]; if (!strcmp(o, " ")) o = " OR "; s += o; }  /* implicit OR is spelled out: the frozen original places an implicit one differently */
 		if (neg) s += "NOT ";
 		if (par) { s += '('; ++depth; }
 		if (quoted && rng() % 5 == 0) s += "field:\"quoted value " + std::to_string(i) + "\"";

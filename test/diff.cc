@@ -20,8 +20,8 @@ static size_t deliberate = 0;
 
 static bool has_exception(const std::string& d) { return d.find("Exception") != std::string::npos; }
 
-// The precedence fix changes the result for a defined class of inputs (see oracle.h,
-// `changed_class`); the lexer is untouched, so classify by the lexer's tokens. Inside
+// The library and the frozen original differ on a defined class of inputs (see oracle.h,
+// `changed_class`); both lex alike, so classify by the lexer's tokens. Inside
 // the class, the independent oracle decides what the right result is.
 static bool deliberate_difference(const std::string& in, const std::string& b) {
 	std::vector<oracle::Tok> toks;

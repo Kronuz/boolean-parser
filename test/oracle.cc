@@ -1,9 +1,9 @@
 // Precedence oracle test. The reference parser in oracle.h is checked against the
 // library on token sequences: every sequence up to a length over a small vocabulary,
-// then random longer ones. The new library must match the oracle exactly (accept or
-// reject, RPN queue, tree). The frozen original (test/frozen) must match the new
-// library everywhere except the classes of input whose meaning the precedence fix
-// changes (see `changed_class`); inside that class the oracle is the authority.
+// then random longer ones. The library must match the oracle exactly (accept or
+// reject, RPN queue, tree). The frozen original (test/frozen) must match the library
+// everywhere except the classes of input where its precedence differs (see
+// `changed_class`); inside that class the oracle is the authority.
 //
 // BP_MAX_LEN raises the exhaustive length of the narrow vocabulary (default 7, or 5 under ASan/TSan; 8 and 9 take minutes).
 #include <cstdio>
@@ -106,8 +106,8 @@ void check(const std::vector<Tok>& toks, bool with_old) {
 	if (!with_old) return;
 	auto old = old_dump(in);
 	Shape sh = shape_of(toks, true), sure = shape_of(toks, false);
-	// (4) Malformed input the old queue accepted: an empty group, or a group with a
-	// missing operand (`a ( NOT )`, `a () b`), whose leftovers it dropped silently.
+	// (4) Malformed input the frozen original accepts: an empty group, or a group with a
+	// missing operand (`a ( NOT )`, `a () b`), whose leftovers it drops silently.
 	// The oracle rejects these, and so must the library (checked above).
 	if (!want.ok && !has_exception(old)) {
 		++n_old_accepted_malformed;
@@ -115,9 +115,9 @@ void check(const std::vector<Tok>& toks, bool with_old) {
 		return;
 	}
 	if (!changed_class(sh)) {
-		// Both reject: the partial queue and the message may differ (the implicit operator
-		// now precedes the "(" that follows a term, which changes which token is reported
-		// first); only the rejection has to agree.
+		// Both reject: the partial queue and the message may differ (the library's implicit
+		// operator precedes the "(" that follows a term, which can change which token is
+		// reported first); only the rejection has to agree.
 		bool same = has_exception(old) && has_exception(got) ? true : old == got;
 		if (!same) fail("old != new outside the changed classes", in, old, got);
 		return;
@@ -129,8 +129,8 @@ void check(const std::vector<Tok>& toks, bool with_old) {
 	}
 	++n_changed;
 	if (!has_exception(old) && !has_exception(got) && tree_of(old) != tree_of(got)) {
-		// Truth-table equivalence where the old result was already right: no implicit
-		// operator and no MAYBE, so only the associativity of AND/OR/XOR changed.
+		// Truth-table equivalence where the frozen result is also right: no implicit
+		// operator and no MAYBE, so only the associativity of AND/OR/XOR differs.
 		if (!sh.implicit && !sh.maybe) {
 			++n_truth;
 			if (!same_truth_table(tree_of(old), tree_of(got))) fail("associativity change altered the truth table", in, old, got);
