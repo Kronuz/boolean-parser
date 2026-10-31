@@ -12,10 +12,7 @@ run in the constructor; the fourth is `Parse()`, called on demand.
 ```
   input string
       │
-      ▼  ContentReader        — hand out one Symbol (char + line/column) at a time
-  symbol stream
-      │
-      ▼  Lexer                — a state machine grouping symbols into Tokens
+      ▼  Lexer                — a state machine over the buffer, grouping bytes into Tokens
   token stream
       │
       ▼  toRPN() (shunting-yard) — reorder into Reverse Polish notation
@@ -25,19 +22,23 @@ run in the constructor; the fourth is `Parse()`, called on demand.
   AST (root)
 ```
 
-## Stage 1: `ContentReader`
+## Stage 1: the input buffer
 
-The constructor copies the input into an owned `char[]` buffer (so a transient
-`std::string_view` argument is safe) and wraps it in a `ContentReader`.
-`NextSymbol()` returns a `Symbol` — the next `char` plus its line and column —
-advancing one byte per call and returning `'\0'` at end of input. It is the
-lexer's only input. Line/column are tracked for diagnostics; the parser does not
-otherwise use them.
+The constructor copies the input into an owned NUL-terminated `char[]` buffer (so a
+transient `std::string_view` argument is safe). The lexer holds pointers into it
+(`cs`, `pos`) and peeks one symbol ahead; `'\0'` is the end of input. Like
+`ContentReader` (which stays in the repo for API compatibility but the lexer no
+longer uses), it treats a `"\n\r"` or `"\r\n"` pair as one symbol, so the second byte
+of a pair never reaches a lexeme. A lexeme is not built byte by byte: it is the run
+of bytes from its first symbol up to the current one, copied once with a single
+`std::string` construction when the token is returned (plain runs inside a bare
+token or a quoted string are skipped in a tight loop).
 
 ## Stage 2: the lexer
 
 `Lexer::NextToken()` is a state machine over `LexerState` that consumes symbols
-until it has one whole `Token`. The states:
+until it has one whole `Token`. Tokens and their lexemes are moved, not copied,
+through the shunting-yard and into the `IdNode`. The states:
 
 - `INIT` — skip whitespace; dispatch on the first significant char. `(` `)` `&`
   `|` `!` go to `SYMBOL_OP` (single-char operators); `"` / `'` open a quote; `[`
@@ -69,8 +70,8 @@ commas*. Stripping delimiters is the consumer's job.
 ## Stage 3: shunting-yard to RPN
 
 `toRPN()` is Dijkstra's shunting-yard. It pulls tokens from the lexer and
-maintains two structures: `stack_output` (a `std::list<Token>`, the growing RPN
-queue) and `stack_operator` (a `std::vector<Token>`, the operator stack).
+maintains two structures: `stack_output` (a `std::vector<Token>` with a head index, the growing RPN
+queue; one allocation instead of a heap node per token) and `stack_operator` (a `std::vector<Token>`, the operator stack).
 
 - An `Id` is appended straight to the output queue. If the previous token was
   also an `Id` (two adjacent terms with no operator), a default operator

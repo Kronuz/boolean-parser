@@ -24,8 +24,9 @@
 #include "BooleanParser.h"
 
 #include <algorithm>
-#include <array>
+#include <new>
 #include <cstring>
+#include <utility>
 #include <iomanip>
 #include <iostream>
 #include <string>
@@ -43,12 +44,26 @@
 constexpr auto DEFAULT_OPERATOR = TokenType::Or;
 
 
-BooleanTree::BooleanTree(std::string_view input_)
-	: input(std::make_unique<char[]>(input_.size() + 1))
+namespace {
+// The lexer reads a NUL-terminated copy of the input; an embedded NUL ends the text.
+std::unique_ptr<char[]>
+copy_input(std::string_view input)
 {
-	std::strncpy(input.get(), input_.data(), input_.size());
-	input[input_.size()] = '\0';
-	lexer = std::make_unique<Lexer>(input.get());
+	auto copy = std::make_unique<char[]>(input.size() + 1);
+	std::memcpy(copy.get(), input.data(), input.size());
+	copy[input.size()] = '\0';
+	return copy;
+}
+}  // namespace
+
+
+BooleanTree::BooleanTree(std::string_view input_)
+	: input(copy_input(input_)),
+	  lexer(input.get())
+{
+	// Typical queries have a handful of tokens: reserve once instead of growing.
+	stack_output.reserve(16);
+	stack_operator.reserve(8);
 	toRPN();
 }
 
@@ -60,36 +75,47 @@ namespace {
 // iteratively.
 constexpr std::size_t recursive_destroy_depth = 64;
 
-// Operands built so far: each subtree, its depth, and the token that produced it (for
-// error messages; list elements stay put). Tears deep subtrees down iteratively if
+// Operands built so far: each subtree, its depth, and the text of the token that
+// produced it (for error messages; the text lives in the node or the output queue, both
+// of which stay put). Tears deep subtrees down iteratively if
 // parsing throws.
 struct Operand {
 	std::unique_ptr<BaseNode> node;
 	std::size_t depth = 0;
-	const Token* head = nullptr;
+	const std::string* head = nullptr;
 };
 
-// A stack of operands: the first 32 live inline, so a typical query allocates nothing
-// here; longer ones spill to the heap.
+// A stack of operands: the first 32 live inline (in raw storage, so nothing is
+// constructed until it is used), so a typical query allocates nothing here; longer
+// ones spill to the heap.
 class Operands {
 	static constexpr std::size_t inline_capacity = 32;
-	std::array<Operand, inline_capacity> local;
+	alignas(Operand) unsigned char raw[inline_capacity * sizeof(Operand)];
 	std::vector<Operand> spill;
 	std::size_t count = 0;
 
+	Operand* local() noexcept { return reinterpret_cast<Operand*>(raw); }
+
 public:
+	Operands() = default;
+	Operands(const Operands&) = delete;
+	Operands& operator=(const Operands&) = delete;
+
 	~Operands() {
 		for (std::size_t i = 0; i < count; ++i) {
 			auto& item = at(i);
 			if (item.depth > recursive_destroy_depth) {
 				destroy_tree(std::move(item.node));
 			}
+			if (i < inline_capacity) {
+				item.~Operand();
+			}
 		}
 	}
 
 	std::size_t size() const noexcept { return count; }
 
-	Operand& at(std::size_t i) { return i < inline_capacity ? local[i] : spill[i - inline_capacity]; }
+	Operand& at(std::size_t i) { return i < inline_capacity ? local()[i] : spill[i - inline_capacity]; }
 
 	void need(std::size_t n) const {
 		if (count < n) {
@@ -99,7 +125,7 @@ public:
 
 	void push(Operand item) {
 		if (count < inline_capacity) {
-			local[count] = std::move(item);
+			new (&local()[count]) Operand(std::move(item));
 		} else {
 			spill.push_back(std::move(item));
 		}
@@ -109,7 +135,9 @@ public:
 	Operand pop() {
 		--count;
 		if (count < inline_capacity) {
-			return std::move(local[count]);
+			Operand item(std::move(local()[count]));
+			local()[count].~Operand();
+			return item;
 		}
 		auto item = std::move(spill.back());
 		spill.pop_back();
@@ -146,15 +174,20 @@ BooleanTree::BuildTree()
 	 * depth is bounded by the input's length, not the native stack, and a binary
 	 * operator's operands keep their source order (right is popped first). */
 	Operands operands;
-	for (const auto& token : stack_output) {
+	for (auto it = stack_output.begin() + out_head; it != stack_output.end(); ++it) {
+		auto& token = *it;
 		switch (token.get_type()) {
 			case TokenType::Id:
-				operands.push({std::make_unique<IdNode>(token.get_lexeme()), 1, &token});
+			{
+				auto id = std::make_unique<IdNode>(std::move(token.lexeme_ref()));
+				const std::string* head = &id->id_ref();
+				operands.push({std::move(id), 1, head});
+			}
 				break;
 			case TokenType::Not: {
 				operands.need(1);
 				auto operand = operands.pop();
-				operands.push({std::make_unique<NotNode>(std::move(operand.node)), operand.depth + 1, &token});
+				operands.push({std::make_unique<NotNode>(std::move(operand.node)), operand.depth + 1, &token.get_lexeme()});
 				break;
 			}
 			case TokenType::Or:
@@ -172,7 +205,7 @@ BooleanTree::BuildTree()
 					case TokenType::Maybe: node = std::make_unique<MaybeNode>(std::move(lef.node), std::move(rig.node)); break;
 					default:               node = std::make_unique<XorNode>(std::move(lef.node), std::move(rig.node)); break;
 				}
-				operands.push({std::move(node), depth, &token});
+				operands.push({std::move(node), depth, &token.get_lexeme()});
 				break;
 			}
 			default: {
@@ -183,10 +216,11 @@ BooleanTree::BuildTree()
 	}
 	operands.need(1);
 	if (operands.size() > 1) {
-		std::string msj = "'" + operands.at(operands.size() - 2).head->get_lexeme() + "' not expected";
+		std::string msj = "'" + *operands.at(operands.size() - 2).head + "' not expected";
 		throw SyntacticException(msj.c_str());
 	}
 	stack_output.clear();
+	out_head = 0;
 	auto result = operands.pop();
 	root_depth = result.depth;
 	return std::move(result.node);
@@ -200,35 +234,32 @@ BooleanTree::BuildTree()
 void
 BooleanTree::toRPN()
 {
-	currentToken = lexer->NextToken();
+	currentToken = lexer.NextToken();
 	bool last_token_is_id = false;
 
 	while (currentToken.get_type() != TokenType::EndOfFile) {
 		switch (currentToken.get_type()) {
 			case TokenType::Id:
-				stack_output.push_back(currentToken);
+				stack_output.push_back(std::move(currentToken));
 				if (last_token_is_id) {
 					while (!stack_operator.empty() && precedence(DEFAULT_OPERATOR) > precedence(stack_operator.back().get_type())) {
-						Token token_back = stack_operator.back();
+						stack_output.push_back(std::move(stack_operator.back()));
 						stack_operator.pop_back();
-						stack_output.push_back(token_back);
 					}
-					Token default_op(DEFAULT_OPERATOR);
-					stack_operator.push_back(default_op);
+					stack_operator.emplace_back(DEFAULT_OPERATOR);
 				}
 				last_token_is_id = true;
 				break;
 
 			case TokenType::LeftParenthesis:
-				stack_operator.push_back(currentToken);
+				stack_operator.push_back(std::move(currentToken));
 				break;
 
 			case TokenType::RightParenthesis:
 				while (true) {
 					if (!stack_operator.empty()) {
-							Token token_back = stack_operator.back();
-						if (token_back.get_type() != TokenType::LeftParenthesis) {
-							stack_output.push_back(token_back);
+						if (stack_operator.back().get_type() != TokenType::LeftParenthesis) {
+							stack_output.push_back(std::move(stack_operator.back()));
 							stack_operator.pop_back();
 						} else {
 							stack_operator.pop_back();
@@ -247,23 +278,21 @@ BooleanTree::toRPN()
 			case TokenType::Maybe:
 			case TokenType::Xor:
 				while (!stack_operator.empty() && precedence(currentToken.get_type()) > precedence(stack_operator.back().get_type())) {
-					Token token_back = stack_operator.back();
+					stack_output.push_back(std::move(stack_operator.back()));
 					stack_operator.pop_back();
-					stack_output.push_back(token_back);
 				}
-				stack_operator.push_back(currentToken);
+				stack_operator.push_back(std::move(currentToken));
 				last_token_is_id = false;
 				break;
 
 			case TokenType::EndOfFile:
 				break;
 		}
-		currentToken = lexer->NextToken();
+		currentToken = lexer.NextToken();
 	}
 
 	while (!stack_operator.empty()) {
-		Token tb = stack_operator.back();
-		stack_output.push_back(tb);
+		stack_output.push_back(std::move(stack_operator.back()));
 		stack_operator.pop_back();
 	}
 }

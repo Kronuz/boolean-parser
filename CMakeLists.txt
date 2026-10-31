@@ -31,6 +31,35 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
   target_link_libraries(boolean_parser_test PRIVATE boolean_parser Threads::Threads)
   add_test(NAME boolean_parser COMMAND boolean_parser_test)
 
+  # Differential test against the frozen original (test/frozen). The frozen sources are
+  # compiled with every global name prefixed "Old" so both implementations can share one
+  # executable; the test compares RPN queue, tree and exception text on edge cases and
+  # random input.
+  set(BP_RENAMES Symbol ContentReader Lexer LexerState Token TokenType NodeType BaseNode AndNode
+    MaybeNode NotNode OrNode XorNode IdNode LexicalException SyntacticException BooleanTree)
+  set(BP_OLD_DEFS "")
+  foreach(n ${BP_RENAMES})
+    list(APPEND BP_OLD_DEFS "${n}=Old${n}")
+  endforeach()
+  add_library(boolean_parser_frozen OBJECT
+    test/frozen/BooleanLexer.cc test/frozen/BooleanParser.cc test/frozen/ContentReader.cc
+    test/frozen/frozen_dump.cc)
+  target_compile_definitions(boolean_parser_frozen PRIVATE ${BP_OLD_DEFS})
+  target_compile_features(boolean_parser_frozen PRIVATE cxx_std_17)
+  add_executable(boolean_parser_diff test/diff.cc test/new_dump.cc $<TARGET_OBJECTS:boolean_parser_frozen>)
+  target_include_directories(boolean_parser_diff PRIVATE test)
+  target_link_libraries(boolean_parser_diff PRIVATE boolean_parser)
+  add_test(NAME boolean_parser_diff COMMAND boolean_parser_diff)
+
+  # Benchmark: cmake -B build -DBOOLEAN_PARSER_BENCH=ON -DCMAKE_BUILD_TYPE=Release
+  #            && cmake --build build --target boolean_parser_bench
+  option(BOOLEAN_PARSER_BENCH "Build the parser benchmark" OFF)
+  if(BOOLEAN_PARSER_BENCH)
+    add_executable(boolean_parser_bench bench/bench_bool.cc test/new_dump.cc $<TARGET_OBJECTS:boolean_parser_frozen>)
+    target_include_directories(boolean_parser_bench PRIVATE bench test)
+    target_link_libraries(boolean_parser_bench PRIVATE boolean_parser)
+  endif()
+
   # A runnable tour of the library (not a test): build & run ./build/boolean_parser_demo
   add_executable(boolean_parser_demo examples/demo.cc)
   target_link_libraries(boolean_parser_demo PRIVATE boolean_parser)

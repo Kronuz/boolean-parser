@@ -42,107 +42,138 @@ constexpr char RIGHT_SQUARE_BRACKET   = ']';
 
 
 Lexer::Lexer(char* input)
-	: contentReader(ContentReader(input)),
-	  currentSymbol(contentReader.NextSymbol()) { }
+	: cs(input), pos(input), cur('\0'), saw_newline(false)
+{
+	advance();
+}
+
+
+namespace {
+
+// Bytes that need the general state machine inside a bare token: the operator
+// characters, the quotes, whitespace-like bytes that the reader treats specially,
+// and the end of the input. Everything else extends the token.
+struct StopTable {
+	bool stop[256];
+	constexpr StopTable() : stop() {
+		for (char c : {'(', ')', '&', '|', '!', '"', '\'', ' ', '\0', '\n', '\r'}) {
+			stop[static_cast<unsigned char>(c)] = true;
+		}
+	}
+};
+constexpr StopTable stop_table;
+
+// The lexeme of the symbols consumed from `start` up to `end`: the bytes in between,
+// except that the second byte of a "\n\r" or "\r\n" pair was skipped by the reader.
+std::string
+make_lexeme(const char* start, const char* end, bool saw_newline)
+{
+	std::string lexeme(start, end);
+	if (saw_newline && lexeme.find_first_of("\r\n") != std::string::npos) {
+		lexeme.clear();
+		for (const char* p = start; p != end; ++p) {
+			lexeme += *p;
+			if ((*p == '\n' && p + 1 != end && p[1] == '\r') || (*p == '\r' && p + 1 != end && p[1] == '\n')) {
+				++p;
+			}
+		}
+	}
+	return lexeme;
+}
+
+}  // namespace
 
 
 Token
 Lexer::NextToken()
 {
-	std::string lexeme;
+	// The lexeme is the run of symbols from the first non-blank one up to (not
+	// including) the current symbol, so it is only a pair of pointers until a token
+	// is returned.
+	const char* start = nullptr;
+	saw_newline = false;
 	LexerState currentState = LexerState::INIT;
 	Token token;
-	char quote;
+	char quote = '\0';
 
 	auto upState = currentState;
 
-	std::string symbol;
-	std::string lcSymbol;
-
 	while (true) {
-		symbol.clear();
-		symbol += currentSymbol.symbol;
 		switch (currentState) {
 			case LexerState::INIT:
-				switch (currentSymbol.symbol) {
+				switch (cur) {
 					case LEFT_SQUARE_BRACKET:
-						lexeme += currentSymbol.symbol;
+						start = cs;
 						currentState = LexerState::INIT_SQUARE_BRACKET;
-						currentSymbol = contentReader.NextSymbol();
+						advance();
 						break;
 
 					case SINGLEQUOTE:
-						lexeme += currentSymbol.symbol;
+						start = cs;
 						currentState = LexerState::TOKEN_QUOTE;
 						quote = SINGLEQUOTE;
-						currentSymbol = contentReader.NextSymbol();
+						advance();
 						break;
 
 					case DOUBLEQUOTE:
-						lexeme += currentSymbol.symbol;
+						start = cs;
 						currentState = LexerState::TOKEN_QUOTE;
 						quote = DOUBLEQUOTE;
-						currentSymbol = contentReader.NextSymbol();
+						advance();
 						break;
 
 					case '\0':
 						currentState = LexerState::EOFILE;
 						break;
 
+					case ' ':
+					case '\n':
+					case '\t':
+					case '\r':
+						advance();
+						break;
+
+					case '(':
+					case ')':
+					case '&':
+					case '|':
+					case '!':
+						start = cs;
+						currentState = LexerState::SYMBOL_OP;
+						advance();
+						break;
+
 					default:
-						switch (currentSymbol.symbol) {
-							case ' ':
-							case '\n':
-							case '\t':
-							case '\r':
-								currentState = LexerState::INIT;
-								currentSymbol = contentReader.NextSymbol();
-								break;
-							case '(':
-							case ')':
-							case '&':
-							case '|':
-							case '!':
-								lexeme += currentSymbol.symbol;
-								currentState = LexerState::SYMBOL_OP;
-								currentSymbol = contentReader.NextSymbol();
-								break;
-							default:
-								lexeme += currentSymbol.symbol;
-								if (lexeme.size() >= 1024) {
-									std::string msj = "Symbol " + symbol + " not expected";
-									throw LexicalException(msj);
-								}
-								currentState = LexerState::TOKEN;
-								currentSymbol = contentReader.NextSymbol();
-								break;
-						}
+						start = cs;
+						currentState = LexerState::TOKEN;
+						advance();
+						break;
 				}
 				break;
 
 			case LexerState::TOKEN:
-				switch (currentSymbol.symbol) {
+				switch (cur) {
 					case DOUBLEQUOTE:
-						lexeme += currentSymbol.symbol;
 						currentState = LexerState::TOKEN_QUOTE;
 						quote = DOUBLEQUOTE;
-						currentSymbol = contentReader.NextSymbol();
+						advance();
 						break;
 
 					case SINGLEQUOTE:
-						lexeme += currentSymbol.symbol;
 						currentState = LexerState::TOKEN_QUOTE;
 						quote = SINGLEQUOTE;
-						currentSymbol = contentReader.NextSymbol();
+						advance();
 						break;
 
 					default:
-						if (!IsSymbolOp(currentSymbol.symbol) && currentSymbol.symbol != ' ' && currentSymbol.symbol != '\0') {
-							lexeme += currentSymbol.symbol;
-							currentState =  LexerState::TOKEN;
-							currentSymbol = contentReader.NextSymbol();
-						}  else {
-							token.set_lexeme(lexeme);
+						if (!IsSymbolOp(cur) && cur != ' ' && cur != '\0') {
+							// Skip the run of ordinary bytes that follows in one tight loop.
+							const char* q = pos;
+							while (!stop_table.stop[static_cast<unsigned char>(*q)]) { ++q; }
+							pos = q;
+							advance();
+						} else {
+							token.set_lexeme(make_lexeme(start, cs, saw_newline));
 							token.set_type(TokenType::Id);
 							IsStringOperator(token);
 							return token;
@@ -151,97 +182,84 @@ Lexer::NextToken()
 				break;
 
 			case LexerState::TOKEN_QUOTE:
-				switch (currentSymbol.symbol) {
+				switch (cur) {
 					case '\\':
-						lexeme += currentSymbol.symbol;
-						currentState =  LexerState::ESCAPE;
-						currentSymbol = contentReader.NextSymbol();
+						currentState = LexerState::ESCAPE;
+						advance();
 						break;
 
-					case '\0': {
-						std::string msj = "Symbol double quote expected";
-						throw LexicalException(msj);
-					}
+					case '\0':
+						throw LexicalException("Symbol double quote expected");
 
 					default:
-						if (currentSymbol.symbol == quote) {
-							lexeme += currentSymbol.symbol;
+						if (cur == quote) {
 							upState == LexerState::INIT_SQUARE_BRACKET ? currentState = LexerState::END_SQUARE_BRACKET : currentState = LexerState::TOKEN;
-							currentSymbol = contentReader.NextSymbol();
 						} else {
-							lexeme += currentSymbol.symbol;
-							currentSymbol = contentReader.NextSymbol();
+							// Skip the rest of the plain bytes of this quoted run.
+							const char* q = pos;
+							while (*q != quote && *q != '\\' && *q != '\0' && *q != '\n' && *q != '\r') { ++q; }
+							pos = q;
 						}
+						advance();
 				}
 				break;
 
 			case LexerState::ESCAPE:
-				switch (currentSymbol.symbol) {
-					case '\0': {
-						std::string msj = "Symbol EOF not expected";
-						throw LexicalException(msj);
-					}
+				switch (cur) {
+					case '\0':
+						throw LexicalException("Symbol EOF not expected");
 
 					default:
-						lexeme += currentSymbol.symbol;
 						currentState = LexerState::TOKEN_QUOTE;
-						currentSymbol = contentReader.NextSymbol();
+						advance();
 						break;
-
 				}
 				break;
 
 			case LexerState::INIT_SQUARE_BRACKET:
-				switch (currentSymbol.symbol) {
+				switch (cur) {
 					case DOUBLEQUOTE:
-						lexeme += currentSymbol.symbol;
 						currentState = LexerState::TOKEN_QUOTE;
 						upState = LexerState::INIT_SQUARE_BRACKET;
 						quote = DOUBLEQUOTE;
-						currentSymbol = contentReader.NextSymbol();
+						advance();
 						continue;
 
 					case SINGLEQUOTE:
-						lexeme += currentSymbol.symbol;
 						currentState = LexerState::TOKEN_QUOTE;
 						upState = LexerState::INIT_SQUARE_BRACKET;
 						quote = SINGLEQUOTE;
-						currentSymbol = contentReader.NextSymbol();
+						advance();
 						continue;
 
 					default:
-						if (currentSymbol.symbol != RIGHT_SQUARE_BRACKET && currentSymbol.symbol != '\0') {
-							lexeme += currentSymbol.symbol;
-							currentSymbol = contentReader.NextSymbol();
+						if (cur != RIGHT_SQUARE_BRACKET && cur != '\0') {
+							advance();
 							continue;
 						}
 				}
 				[[fallthrough]];
 
 			case LexerState::END_SQUARE_BRACKET:
-				switch (currentSymbol.symbol) {
+				switch (cur) {
 					case RIGHT_SQUARE_BRACKET:
-						lexeme += currentSymbol.symbol;
 						currentState = LexerState::TOKEN;
-						currentSymbol = contentReader.NextSymbol();
+						advance();
 						break;
 
 					case ',':
-						lexeme += currentSymbol.symbol;
 						currentState = LexerState::INIT_SQUARE_BRACKET;
-						currentSymbol = contentReader.NextSymbol();
+						advance();
 						break;
 
 					default:
-						std::string msj = "Symbol ] expected";
-						throw LexicalException(msj);
-
+						throw LexicalException("Symbol ] expected");
 				}
 				break;
 
 			case LexerState::SYMBOL_OP:
-				token.set_lexeme(lexeme);
-				switch (lexeme.at(0)) {
+				token.set_lexeme(std::string(1, *start));
+				switch (*start) {
 					case '(':
 						token.set_type(TokenType::LeftParenthesis);
 						break;
@@ -274,42 +292,30 @@ Lexer::NextToken()
 void
 Lexer::IsStringOperator(Token& token) const
 {
-	auto lexeme = token.get_lexeme();
-	if (!lexeme.empty()) {
-		switch (lexeme.at(0)) {
-			case 'a':
-			case 'A':
-				if (strcasecmp(lexeme.data(), AND) == 0) {
-					token.set_type(TokenType::And);
-				}
-				break;
-			case 'm':
-			case 'M':
-				if (strcasecmp(lexeme.data(), MAYBE) == 0) {
-					token.set_type(TokenType::Maybe);
-				}
-				break;
-			case 'o':
-			case 'O':
-				if (strcasecmp(lexeme.data(), OR) == 0) {
-					token.set_type(TokenType::Or);
-				}
-				break;
-			case 'n':
-			case 'N':
-				if (strcasecmp(lexeme.data(), NOT) == 0) {
-					token.set_type(TokenType::Not);
-				}
-				break;
-			case 'x':
-			case 'X':
-				if (strcasecmp(lexeme.data(), XOR) == 0) {
-					token.set_type(TokenType::Xor);
-				}
-				break;
-			default:
-				return;
+	// Case-insensitive match of the five keywords; the length and first letter reject
+	// almost every ordinary term before any comparison.
+	const auto& lexeme = token.get_lexeme();
+	const char* s = lexeme.data();
+	auto is = [&](const char* kw, size_t n) {
+		for (size_t i = 0; i < n; ++i) {
+			if ((s[i] | 0x20) != kw[i]) { return false; }
 		}
+		return true;
+	};
+	switch (lexeme.size()) {
+		case 2:
+			if (is("or", 2)) { token.set_type(TokenType::Or); }
+			break;
+		case 3:
+			if (is("and", 3)) { token.set_type(TokenType::And); }
+			else if (is("not", 3)) { token.set_type(TokenType::Not); }
+			else if (is("xor", 3)) { token.set_type(TokenType::Xor); }
+			break;
+		case 5:
+			if (is("maybe", 5)) { token.set_type(TokenType::Maybe); }
+			break;
+		default:
+			break;
 	}
 }
 

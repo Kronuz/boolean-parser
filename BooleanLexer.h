@@ -41,11 +41,31 @@ enum class LexerState : uint8_t {
 };
 
 
+// Lexes a NUL-terminated buffer that must outlive the Lexer. The scanner works on
+// pointers into that buffer and builds each lexeme with one allocation (none up to
+// the small-string size). It reproduces the ContentReader convention that a "\n\r"
+// or "\r\n" pair is a single symbol, so the second byte of a pair never reaches a
+// lexeme.
 class Lexer {
-	ContentReader contentReader;
-	Symbol currentSymbol;
+	const char* cs;       // start of the current (peeked) symbol
+	const char* pos;      // just after it, including a skipped "\n\r" / "\r\n" partner
+	char cur;             // the current symbol; '\0' at the end of the input
+	bool saw_newline;     // a "\n" or "\r" was read since NextToken began (lexeme needs the pair rule)
 
-	void InitDictionary();
+	void advance() noexcept {
+		cs = pos;
+		cur = *pos;
+		if (cur != '\0') {
+			++pos;
+			if (cur == '\n' || cur == '\r') {
+				saw_newline = true;
+				if (*pos == (cur == '\n' ? '\r' : '\n')) {
+					++pos;
+				}
+			}
+		}
+	}
+
 	void IsStringOperator(Token& token) const;
 	bool IsSymbolOp(char c) const;
 

@@ -25,6 +25,7 @@
 #pragma once
 
 #include <string>
+#include <utility>
 
 #include "BooleanNode.h"
 
@@ -35,6 +36,13 @@ class IdNode : public BaseNode {
 public:
 	explicit IdNode(const std::string& _id)
 		: id(_id) { }
+
+	explicit IdNode(std::string&& _id) noexcept
+		: id(std::move(_id)) { }
+
+	const std::string& id_ref() const noexcept {
+		return id;
+	}
 
 	std::string getId() const noexcept {
 		return id;

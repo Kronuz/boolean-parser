@@ -76,6 +76,14 @@ a tree, for a handful of expressions.
   builder.
 - [AGENTS.md](AGENTS.md): repository map, invariants, and traps.
 
+## ⚡ Performance
+
+The lexer scans the input by pointer and builds each lexeme with one allocation (none
+up to the small-string size); tokens are moved through the shunting-yard and the
+output queue is a vector with a head index (one allocation). The RPN queue and trees are identical to before
+(`test/diff.cc` compares 140,000 inputs against the original sources). See
+`bench/bench_bool.cc` (`-DBOOLEAN_PARSER_BENCH=ON`).
+
 ## 🛠️ Building and testing
 
 ```sh

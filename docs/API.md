@@ -11,7 +11,7 @@ The whole public surface.
   `SyntacticException`. `root` is a `std::unique_ptr<BaseNode>`.
 - `void PrintTree()` — debug-dump the AST (post-order) to `std::cout`.
 
-The RPN queue (a `std::list<Token>`) is exposed as a deque-like surface:
+The RPN queue (a vector with a moving head) is exposed as a deque-like surface:
 
 - `bool empty()`, `size_t size()`
 - `Token& front()` / `back()` (and const overloads)

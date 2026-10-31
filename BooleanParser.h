@@ -23,9 +23,9 @@
 
 #pragma once
 
-#include <list>
 #include <memory>
 #include <string_view>      // for std::string_view
+#include <stdexcept>
 #include <vector>
 
 #include "ContentReader.h"
@@ -47,19 +47,19 @@ public:
 	void PrintTree();
 
 	inline bool empty() const noexcept {
-		return stack_output.empty();
+		return stack_output.size() == out_head;
 	}
 
 	inline size_t size() const noexcept {
-		return stack_output.size();
+		return stack_output.size() - out_head;
 	}
 
 	inline const Token& front() const {
-		return stack_output.front();
+		return stack_output.at(out_head);
 	}
 
 	inline Token& front() {
-		return stack_output.front();
+		return stack_output.at(out_head);
 	}
 
 	inline const Token& back() const {
@@ -71,10 +71,19 @@ public:
 	}
 
 	inline void pop_front() {
-		stack_output.pop_front();
+		// The queue is a vector with a moving head: popping the front releases the token
+		// and advances the head, so it stays O(1) and one allocation.
+		stack_output.at(out_head) = Token();
+		if (++out_head == stack_output.size()) {
+			stack_output.clear();
+			out_head = 0;
+		}
 	}
 
 	inline void pop_back() {
+		if (stack_output.size() == out_head) {
+			throw std::out_of_range("BooleanTree::pop_back on an empty queue");
+		}
 		stack_output.pop_back();
 	}
 
@@ -85,11 +94,12 @@ private:
 	void release_root();
 	unsigned precedence(TokenType type);
 
-	std::list<Token> stack_output;
+	std::vector<Token> stack_output;   // the RPN queue: [out_head, size)
+	std::size_t out_head = 0;
 	std::size_t root_depth = 0;
 	std::vector<Token> stack_operator;
 
-	std::unique_ptr<Lexer> lexer;
 	std::unique_ptr<char[]> input;
+	Lexer lexer;
 	Token currentToken;
 };

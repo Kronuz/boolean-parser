@@ -10,7 +10,9 @@ easy to fall into.
 ```
 BooleanParser.{h,cc}           BooleanTree: ctor lexes + shunting-yards to RPN; Parse() builds the AST. The only .cc with public API.
 BooleanLexer.{h,cc}            The lexer state machine: tokens, quotes, [a,b,c] lists, symbolic ops.
-ContentReader.{h,cc}           Byte-at-a-time reader feeding the lexer (tracks line/column).
+ContentReader.{h,cc}           Byte-at-a-time reader (tracks line/column). Kept for API compatibility; the lexer no longer uses it (it reads the buffer by pointer and reproduces its "\n\r" pair rule).
+test/diff.cc                   Differential test (CTest `boolean_parser_diff`) against test/frozen, the original sources compiled with `Old`-prefixed names.
+bench/bench_bool.cc            Benchmark vs the frozen original and an arena precedence-climbing parser (cmake -DBOOLEAN_PARSER_BENCH=ON).
 BooleanToken.h                 Token + TokenType (Not/Or/And/Maybe/Xor/parens/Id/EndOfFile). Header.
 BooleanNode.h                  BaseNode + NodeType. Header.
 And/Or/Not/Xor/Maybe/IdNode.h  The AST node types. Headers.
@@ -94,6 +96,22 @@ exposes the repo root as a `PUBLIC` include. The test target is
   every throw site builds the message from a temporary `std::string` and passes
   `.c_str()`; a borrowed pointer dangled the moment the throw unwound the frame.
   Don't revert it to a borrowed pointer.
+
+## Known quirk: implicit OR after a binary operator (owner decision pending)
+
+`toRPN` outputs an `Id` *before* it pops the operators that bind tighter than the
+implicit `OR`, so an implicit `OR` regroups the operands around it:
+
+| input | tree today | tree if the `OR` were emitted first |
+|---|---|---|
+| `a & b c` | `a OR (b AND c)` | `(a AND b) OR c` |
+| `x AND a b` | `x OR (a AND b)` | `(x AND a) OR b` |
+| `NOT a b` | `a OR (NOT b)` | `(NOT a) OR b` |
+
+(The middle column is the library's output, verbatim.)
+Chains of implicit `OR` (`a b c`) and `a OR b c` are unaffected. The rewrite preserves
+this exactly (`test/diff.cc` compares every such input with the original sources);
+fixing it changes query meaning, so it is an owner decision.
 
 ## Traps
 

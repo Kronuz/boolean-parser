@@ -26,6 +26,7 @@
 
 #include <cstdint>
 #include <string>
+#include <utility>
 
 
 enum class TokenType : uint8_t {
@@ -60,6 +61,14 @@ public:
 
 	void set_lexeme(const std::string& lexeme_) {
 		lexeme = lexeme_;
+	}
+
+	void set_lexeme(std::string&& lexeme_) noexcept {
+		lexeme = std::move(lexeme_);
+	}
+
+	std::string& lexeme_ref() noexcept {
+		return lexeme;
 	}
 
 	const std::string& get_lexeme() const noexcept {
