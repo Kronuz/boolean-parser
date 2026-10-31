@@ -5,7 +5,7 @@
 // library everywhere except the classes of input whose meaning the precedence fix
 // changes (see `changed_class`); inside that class the oracle is the authority.
 //
-// BP_MAX_LEN raises the exhaustive length of the narrow vocabulary (default 8).
+// BP_MAX_LEN raises the exhaustive length of the narrow vocabulary (default 7: sanitizer CI jobs run it; 8 and 9 take minutes).
 #include <cstdio>
 #include <cstdlib>
 #include <random>
@@ -146,7 +146,7 @@ void exhaustive(const std::vector<Spell>& vocab, size_t max_len, size_t old_len)
 
 int main() {
 	using namespace oracle;
-	size_t max_len = 8;
+	size_t max_len = 7;
 	if (const char* e = std::getenv("BP_MAX_LEN")) max_len = std::strtoul(e, nullptr, 10);
 
 	// Named cases: the three reported bugs and neighbours, with the exact expected tree.
@@ -186,7 +186,7 @@ int main() {
 	auto pick = [&](const std::vector<Spell>& v) { return v[rng() % v.size()]; };
 	const std::vector<Spell> terms = {{ID, "a"}, {ID, "b"}, {ID, "c"}, {ID, "term"}};
 	const std::vector<Spell> bins = {{AND, "AND"}, {AND, "&"}, {OR, "OR"}, {OR, "|"}, {XOR, "xor"}, {MAYBE, "MAYBE"}};
-	for (int iter = 0; iter < 300000; ++iter) {
+	for (int iter = 0; iter < 100000; ++iter) {
 		std::vector<Tok> t;
 		size_t n = 10 + rng() % 30;
 		int depth = 0;

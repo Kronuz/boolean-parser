@@ -91,7 +91,7 @@ which has the loosest precedence like an explicit one:
 > same-level operator parse exactly as before.
 
 `test/oracle.cc` checks this grammar against an independent recursive-descent parser
-on every token sequence over a small vocabulary up to length 8 (9 with `BP_MAX_LEN=9`)
+on every token sequence over a small vocabulary up to length 7 (8 and 9 with `BP_MAX_LEN`)
 and on random longer ones.
 
 ## 🎯 When to use it

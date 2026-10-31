@@ -12,7 +12,7 @@ BooleanParser.{h,cc}           BooleanTree: ctor lexes + shunting-yards to RPN; 
 BooleanLexer.{h,cc}            The lexer state machine: tokens, quotes, [a,b,c] lists, symbolic ops.
 ContentReader.{h,cc}           Byte-at-a-time reader (tracks line/column). Kept for API compatibility; the lexer no longer uses it (it reads the buffer by pointer and reproduces its "\n\r" pair rule).
 test/diff.cc                   Differential test (CTest `boolean_parser_diff`) against test/frozen, the original sources compiled with `Old`-prefixed names; deliberate differences are limited to the precedence-fix classes.
-test/oracle.{h,cc}             Reference recursive-descent parser and the exhaustive/random oracle test (CTest `boolean_parser_oracle`; BP_MAX_LEN=9 for the deepest run).
+test/oracle.{h,cc}             Reference recursive-descent parser and the exhaustive/random oracle test (CTest `boolean_parser_oracle`; BP_MAX_LEN=9 for the deepest run, default 7).
 bench/bench_bool.cc            Benchmark vs the frozen original and an arena precedence-climbing parser (cmake -DBOOLEAN_PARSER_BENCH=ON).
 BooleanToken.h                 Token + TokenType (Not/Or/And/Maybe/Xor/parens/Id/EndOfFile). Header.
 BooleanNode.h                  BaseNode + NodeType. Header.
