@@ -102,15 +102,30 @@ and on random longer ones.
 The lexer scans the input by pointer and builds each lexeme with one allocation
 (none up to the small-string size). Tokens move through the shunting-yard, and
 the output queue is a vector with a head index (one allocation).
-`bench/bench_bool.cc` times it against the frozen Xapiand original and a
-precedence-climbing parser:
+
+`bench/bench_bool.cc` times a full parse (`BooleanTree`: lex, shunting-yard, and
+`Parse()`) against a precedence-climbing parser with an arena and `string_view`
+lexemes. That parser builds no heap nodes, so it is a floor. Apple M4 Pro, Apple clang
+17 with `-O3 -DNDEBUG -std=gnu++17`, ns per parse (median of 9 trials of about 40 ms;
+repeated runs agree within 5%), measured under `quiet strict` at `adf5b11`:
+
+| Input | BooleanTree | Precedence climbing |
+|---|---:|---:|
+| `alpha AND beta` | 164 ns | 58 ns |
+| 5 terms, mixed operators | 320 ns | 118 ns |
+| A typical field query | 344 ns | 136 ns |
+| 16 random terms | 1.40 µs | 0.50 µs |
+| 128 random terms | 11.1 µs | 3.95 µs |
+| 1,024 random terms | 107 µs | 32.9 µs |
+| 200 nested parentheses | 2.59 µs | 2.96 µs |
 
 ```sh
 cmake -B build -DBOOLEAN_PARSER_BENCH=ON -DCMAKE_BUILD_TYPE=Release
 cmake --build build && ./build/boolean_parser_bench
 ```
 
-[CHANGELOG.md](CHANGELOG.md) has the before and after timings.
+The precedence climber is 2.5 to 3.3 times faster on ordinary queries because it
+allocates no nodes. `BooleanTree` is faster on deeply nested input.
 
 ## 🛠️ Building and testing
 

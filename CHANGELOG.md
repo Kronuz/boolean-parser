@@ -6,6 +6,22 @@ release tags yet, so entries are dated.
 
 ## 2026-10-31
 
+### Documentation
+
+- The README records the machine for the parser benchmark: Apple M4 Pro, Apple clang
+  17, `-O3`, at `adf5b11`. The same run times the frozen original (`test/frozen`)
+  that the lexer and queue rewrite below replaced:
+
+  | workload | frozen original | `BooleanTree` |
+  |---|---:|---:|
+  | 2 terms | 263 ns | 164 ns |
+  | 5 terms mixed | 592 ns | 320 ns |
+  | typical query | 780 ns | 344 ns |
+  | 16 random terms | 2.95 us | 1.40 us |
+  | 128 random terms | 25.3 us | 11.1 us |
+  | 1024 random terms | 186 us | 107 us |
+  | 200 nested parentheses | 5.09 us | 2.59 us |
+
 ### Fixed
 
 - **Implicit `OR` precedence and associativity in `toRPN`.** The shunting-yard
