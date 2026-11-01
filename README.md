@@ -78,28 +78,33 @@ Not for:
 
 - Arithmetic, comparisons or field syntax: it knows boolean operators and terms only.
 - Large trees on a hot path: every term and operator is a heap node behind `unique_ptr`,
-  so a parser that builds no nodes runs 2 to 4.5 times faster from 16 terms up.
+  so a parser that builds no nodes runs 2.1 to 4.7 times faster from 16 terms up.
 - Recursive walks of untrusted input: `PrintTree()`, and any walk of `root` you write
   recursively, needs its own depth limit.
 
 ## ⚡ Performance
 
-Nanoseconds per full parse (lex, shunting-yard and `Parse()`), from `bench/bench_bool.cc`:
-the median of three interleaved runs, each the median of about 40 ms of trials, with Apple
-clang 17 and `-O3 -DNDEBUG`. The comparator is the benchmark's own precedence-climbing
-parser with an arena and `string_view` lexemes; it builds no heap nodes, so it is a floor.
+`bench/bench_bool.cc` times one full parse in ns: lexing, the shunting-yard and `Parse()` into the
+tree, the median of three runs of the benchmark, each the median of about 40 ms of trials.
+`BooleanTree` is this library. The comparator, `climber`, is a precedence-climbing
+recursive-descent parser written in the benchmark, with an arena and `string_view` lexemes, so it
+builds no heap nodes: a floor, not a rival library. It builds the same tree as `BooleanTree`,
+which the benchmark checks for every input before it times anything. `climber × faster` is
+`BooleanTree`'s time over the climber's, so a value above 1 means the climber is faster and below
+1 that `BooleanTree` is. No widely used library parses this grammar (`NOT`, `AND`, `MAYBE`, `XOR`,
+`OR`, implicit `OR`, quoted phrases and lists) into a token queue or tree to compare with. Apple
+clang 17.0.0 with `-O3 -DNDEBUG` on an Apple M4 Pro (macOS 26.7) and an Intel Core i9-9980HK
+(macOS 15.8):
 
-| Input | M4 Pro | M4 Pro, climber | i9-9980HK | i9-9980HK, climber |
-|---|---:|---:|---:|---:|
-| `alpha AND beta` | 80 ns | 56 ns | 146 ns | 160 ns |
-| 5 terms, mixed operators | 196 ns | 119 ns | 395 ns | 273 ns |
-| A typical field query | 218 ns | 133 ns | 401 ns | 220 ns |
-| 16 random terms | 1.04 µs | 0.49 µs | 2.04 µs | 0.85 µs |
-| 128 random terms | 8.35 µs | 4.01 µs | 17.6 µs | 7.09 µs |
-| 1,024 random terms | 104 µs | 33.7 µs | 252 µs | 56.6 µs |
-| 200 nested parentheses | 2.53 µs | 2.94 µs | 5.29 µs | 4.65 µs |
-
-The machines are an Apple M4 Pro and an Intel Core i9-9980HK.
+| Input | M4 Pro, `BooleanTree` | M4 Pro, climber | M4 Pro, climber × faster | i9-9980HK, `BooleanTree` | i9-9980HK, climber | i9-9980HK, climber × faster |
+|---|---:|---:|---:|---:|---:|---:|
+| `alpha AND beta` | 82 ns | 56 ns | 1.5 | 155 ns | 155 ns | 1.0 |
+| 5 terms, mixed operators | 197 ns | 120 ns | 1.6 | 422 ns | 284 ns | 1.5 |
+| A typical field query | 221 ns | 136 ns | 1.6 | 448 ns | 214 ns | 2.1 |
+| 16 random terms | 1.05 µs | 506 ns | 2.1 | 2.16 µs | 841 ns | 2.6 |
+| 128 random terms | 8.31 µs | 4.03 µs | 2.1 | 18.6 µs | 6.72 µs | 2.8 |
+| 1,024 random terms | 104 µs | 32.6 µs | 3.2 | 257 µs | 55.2 µs | 4.7 |
+| 200 nested parentheses | 2.54 µs | 2.94 µs | 0.9 | 5.51 µs | 4.55 µs | 1.2 |
 
 ```sh
 cmake -S . -B build -DBOOLEAN_PARSER_BENCH=ON -DCMAKE_BUILD_TYPE=Release
