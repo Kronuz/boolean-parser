@@ -24,8 +24,10 @@
 
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <new>
 #include <vector>
 
 
@@ -42,6 +44,21 @@ enum class NodeType : uint8_t {
 class BaseNode {
 public:
 	virtual ~BaseNode() = default;
+
+	// Nodes up to 64 bytes come from a small per-thread cache of freed blocks (a tree is
+	// built and torn down one node at a time, and most of the cost is the allocator). The
+	// cache gives any block back to the system allocator past 256 per size, and at thread
+	// exit, so it can be freed on any thread. The other forms are the usual ones.
+	static void* operator new(std::size_t size);
+	static void operator delete(void* block, std::size_t size) noexcept;
+	static void* operator new(std::size_t size, std::align_val_t align) { return ::operator new(size, align); }
+	static void operator delete(void* block, std::size_t, std::align_val_t align) noexcept { ::operator delete(block, align); }
+	static void* operator new(std::size_t, void* where) noexcept { return where; }
+	static void operator delete(void*, void*) noexcept { }
+	static void* operator new(std::size_t size, const std::nothrow_t&) noexcept {
+		try { return operator new(size); } catch (...) { return nullptr; }
+	}
+	static void operator delete(void* block, const std::nothrow_t&) noexcept { ::operator delete(block); }
 
 	virtual NodeType getType() const noexcept = 0;
 

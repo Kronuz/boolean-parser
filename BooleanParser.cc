@@ -45,12 +45,110 @@ constexpr auto DEFAULT_OPERATOR = TokenType::Or;
 
 
 namespace {
-// The lexer reads a NUL-terminated copy of the input; an embedded NUL ends the text.
-std::unique_ptr<char[]>
-copy_input(std::string_view input)
+
+// A node cache would hide use-after-free from AddressSanitizer and MemorySanitizer, so
+// those builds use the system allocator.
+#if defined(__SANITIZE_ADDRESS__)
+#define BOOLEAN_PARSER_NO_NODE_CACHE 1
+#elif defined(__has_feature)
+#if __has_feature(address_sanitizer) || __has_feature(memory_sanitizer)
+#define BOOLEAN_PARSER_NO_NODE_CACHE 1
+#endif
+#endif
+
+#ifndef BOOLEAN_PARSER_NO_NODE_CACHE
+
+// Freed node blocks, kept per thread by size class (16, 32, 48 and 64 bytes). A block is
+// always allocated at its class size, so any block of a class fits any node of it.
+constexpr std::size_t node_grain = 16;
+constexpr std::size_t node_classes = 4;
+constexpr unsigned node_keep = 256;
+
+// The size class of a node of `size` bytes: 0 for up to 16, 1 for up to 32, and so on.
+constexpr std::size_t node_class(std::size_t size) { return (size + node_grain - 1) / node_grain - 1; }
+
+struct NodeCache {
+	void* head[node_classes];
+	unsigned count[node_classes];
+	bool registered;   // the thread has a reaper to free the blocks at its exit
+	bool gone;         // the reaper ran: later frees go straight to the allocator
+};
+
+thread_local NodeCache node_cache = {};
+
+struct NodeCacheReaper {
+	~NodeCacheReaper() {
+		for (auto& head : node_cache.head) {
+			while (head != nullptr) {
+				void* next = *static_cast<void**>(head);
+				::operator delete(head);
+				head = next;
+			}
+		}
+		node_cache.gone = true;
+	}
+};
+
+#endif
+
+}  // namespace
+
+
+void*
+BaseNode::operator new(std::size_t size)
 {
-	auto copy = std::make_unique<char[]>(input.size() + 1);
-	std::memcpy(copy.get(), input.data(), input.size());
+#ifndef BOOLEAN_PARSER_NO_NODE_CACHE
+	const std::size_t cls = node_class(size);
+	if (cls < node_classes) {
+		auto& cache = node_cache;
+		if (void* block = cache.head[cls]) {
+			cache.head[cls] = *static_cast<void**>(block);
+			--cache.count[cls];
+			return block;
+		}
+		size = (cls + 1) * node_grain;
+	}
+#endif
+	return ::operator new(size);
+}
+
+
+void
+BaseNode::operator delete(void* block, std::size_t size) noexcept
+{
+#ifndef BOOLEAN_PARSER_NO_NODE_CACHE
+	const std::size_t cls = node_class(size);
+	if (cls < node_classes && block != nullptr) {
+		auto& cache = node_cache;
+		if (cache.count[cls] < node_keep && !cache.gone) {
+			if (!cache.registered) {
+				cache.registered = true;
+				static thread_local NodeCacheReaper reaper;
+				(void)reaper;
+			}
+			*static_cast<void**>(block) = cache.head[cls];
+			cache.head[cls] = block;
+			++cache.count[cls];
+			return;
+		}
+	}
+#endif
+	(void)size;
+	::operator delete(block);
+}
+
+
+namespace {
+// The lexer reads a NUL-terminated copy of the input; an embedded NUL ends the text.
+char*
+copy_input(std::string_view input, char* inline_buffer, std::size_t inline_size, std::unique_ptr<char[]>& heap)
+{
+	char* copy = inline_buffer;
+	if (input.size() >= inline_size) {
+		heap = std::make_unique<char[]>(input.size() + 1);
+		copy = heap.get();
+	}
+	std::memcpy(copy, input.data(), input.size());
 	copy[input.size()] = '\0';
 	return copy;
 }
@@ -58,12 +156,8 @@ copy_input(std::string_view input)
 
 
 BooleanTree::BooleanTree(std::string_view input_)
-	: input(copy_input(input_)),
-	  lexer(input.get())
+	: lexer(copy_input(input_, inline_input, inline_input_size, long_input))
 {
-	// Typical queries have a handful of tokens: reserve once instead of growing.
-	stack_output.reserve(16);
-	stack_operator.reserve(8);
 	toRPN();
 	validate();
 }

@@ -18,12 +18,17 @@
 // Build via CMake: cmake -B build && cmake --build build && ctest --test-dir build
 #include <cassert>
 #include <cstdio>
+#include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include <iostream>
+#include <memory>
+#include <new>
 #include <pthread.h>
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <vector>
 
 #include "AndNode.h"
@@ -437,6 +442,122 @@ static void test_print_tree() {
 
 
 // ---------------------------------------------------------------------------
+// 8. Node allocation: nodes come from a per-thread cache of freed blocks, so a tree built
+//    on one thread and destroyed on another, trees alive together and the other forms of
+//    `new` all have to keep their blocks apart.
+// ---------------------------------------------------------------------------
+
+struct alignas(64) WideNode : BaseNode {
+	char pad[64];
+	NodeType getType() const noexcept override { return NodeType::ID; }
+};
+
+// Two node sizes in one size class (17..32 bytes): a block freed by one serves the other.
+struct NarrowNode : BaseNode {
+	char pad[16];
+	NodeType getType() const noexcept override { return NodeType::ID; }
+};
+struct BigNode : BaseNode {
+	char pad[24];
+	NodeType getType() const noexcept override { return NodeType::ID; }
+};
+static_assert(sizeof(NarrowNode) > 16 && sizeof(BigNode) <= 32 && sizeof(BigNode) > sizeof(NarrowNode), "one size class, two sizes");
+
+static std::string query_for(int i) {
+	const std::string n = std::to_string(i);
+	switch (i % 6) {
+		case 0: return "a" + n + " AND b" + n;
+		case 1: return "NOT a" + n;
+		case 2: return "(a" + n + " OR b" + n + ") XOR NOT c" + n + " MAYBE d" + n;
+		case 3: return "a" + n;
+		case 4: return "title:\"hello world " + n + "\" AND (author:bob" + n + " OR author:alice) AND NOT draft";
+		default: return "a" + n + " b" + n + " c" + n + " & d" + n + " | NOT e" + n;
+	}
+}
+
+static void test_node_allocation() {
+	// Built on one thread, torn down on another, over and over: every thread ends with
+	// freed blocks in its cache.
+	for (int round = 0; round < 300; ++round) {
+		std::unique_ptr<BooleanTree> tree;
+		std::string want;
+		std::thread build([&] {
+			tree = std::make_unique<BooleanTree>(query_for(round));
+			tree->Parse();
+			want = inorder(tree->root.get());
+		});
+		build.join();
+		std::thread destroy([&] {
+			assert(inorder(tree->root.get()) == want);
+			tree.reset();
+		});
+		destroy.join();
+	}
+
+	// Many trees alive together, destroyed in a scrambled order, then new ones built over
+	// the freed blocks: no two nodes share a block.
+	std::vector<std::unique_ptr<BooleanTree>> live;
+	std::vector<std::string> wants;
+	auto build = [&](int i) {
+		live.push_back(std::make_unique<BooleanTree>(query_for(i)));
+		live.back()->Parse();
+		wants.push_back(inorder(live.back()->root.get()));
+	};
+	for (int i = 0; i < 700; ++i) { build(i); }
+	for (std::size_t i = 0; i < live.size(); ++i) { assert(inorder(live[i]->root.get()) == wants[i]); }
+	std::uint64_t seed = 12345;
+	for (int k = 0; k < 400; ++k) {
+		seed = seed * 6364136223846793005ULL + 1442695040888963407ULL;
+		const std::size_t at = static_cast<std::size_t>(seed >> 33) % live.size();
+		live[at].reset();
+		live[at] = std::make_unique<BooleanTree>(query_for(1000 + k));
+		live[at]->Parse();
+		wants[at] = inorder(live[at]->root.get());
+	}
+	for (std::size_t i = 0; i < live.size(); ++i) { assert(inorder(live[i]->root.get()) == wants[i]); }
+	live.clear();
+
+	// More nodes than the cache keeps freed at once, so the surplus goes back to the allocator.
+	{
+		std::string big = "a";
+		for (int i = 0; i < 5000; ++i) { big += " AND a"; }
+		BooleanTree tree(big);
+		tree.Parse();
+		assert(tree.root->getType() == NodeType::AND);
+	}
+
+	// Blocks freed by a smaller node serve a larger one of the same class: they are as large
+	// as the class, so the larger node's bytes stay inside its block.
+	for (int round = 0; round < 40; ++round) {
+		std::vector<std::unique_ptr<BaseNode>> nodes;
+		for (int i = 0; i < 100; ++i) { nodes.push_back(std::make_unique<NarrowNode>()); }
+		nodes.clear();
+		for (int i = 0; i < 100; ++i) {
+			auto big = std::make_unique<BigNode>();
+			std::memset(big->pad, 0x40 + i, sizeof(big->pad));
+			nodes.push_back(std::move(big));
+		}
+		for (int i = 0; i < 100; ++i) {
+			const auto* pad = static_cast<BigNode*>(nodes[i].get())->pad;
+			for (std::size_t k = 0; k < sizeof(BigNode::pad); ++k) { assert(static_cast<unsigned char>(pad[k]) == 0x40 + i); }
+		}
+	}
+
+	// The other forms of new still work and keep their alignment.
+	alignas(IdNode) unsigned char storage[sizeof(IdNode)];
+	auto* placed = new (storage) IdNode(std::string("placed"));
+	assert(placed->getId() == "placed");
+	placed->~IdNode();
+	std::unique_ptr<IdNode> nothrow_node(new (std::nothrow) IdNode(std::string("nothrow")));
+	assert(nothrow_node && nothrow_node->getId() == "nothrow");
+	std::unique_ptr<BaseNode> wide(new WideNode);
+	assert(reinterpret_cast<std::uintptr_t>(wide.get()) % 64 == 0);
+
+	std::printf("allocation OK: nodes are kept apart across threads, many live trees and the other new forms\n");
+}
+
+
+// ---------------------------------------------------------------------------
 // 7. Operand order and depth: binary operators keep source order on every compiler,
 //    and nesting far deeper than a thread's stack builds and tears down.
 // ---------------------------------------------------------------------------
@@ -519,6 +640,7 @@ int main() {
 	test_parse_ast();
 	test_errors();
 	test_print_tree();
+	test_node_allocation();
 	std::printf("all boolean-parser tests passed\n");
 	return 0;
 }

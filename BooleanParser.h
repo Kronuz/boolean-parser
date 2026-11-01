@@ -31,6 +31,7 @@
 #include "ContentReader.h"
 #include "BooleanLexer.h"
 #include "BooleanNode.h"
+#include "BooleanTokenVector.h"
 
 
 class BooleanTree {
@@ -95,12 +96,15 @@ private:
 	void release_root();
 	unsigned precedence(TokenType type);
 
-	std::vector<Token> stack_output;   // the RPN queue: [out_head, size)
+	TokenVector<16> stack_output;   // the RPN queue: [out_head, size)
 	std::size_t out_head = 0;
 	std::size_t root_depth = 0;
-	std::vector<Token> stack_operator;
+	TokenVector<8> stack_operator;
 
-	std::unique_ptr<char[]> input;
+	// The lexer reads a NUL-terminated copy of the input: inline when it is short.
+	static constexpr std::size_t inline_input_size = 128;
+	char inline_input[inline_input_size];
+	std::unique_ptr<char[]> long_input;
 	Lexer lexer;
 	Token currentToken;
 };
