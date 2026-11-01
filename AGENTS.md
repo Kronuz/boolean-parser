@@ -26,8 +26,7 @@ CMakeLists.txt                 STATIC library `boolean_parser` (+ alias boolean_
 LICENSE                        MIT, Copyright (c) 2026 Germán Méndez Bravo and (c) 2015-2020 Dubalu LLC.
 CHANGELOG.md                   Behavior and performance changes, dated.
 README.md                      What it is, install, quick start.
-docs/API.md                    The API reference and caveats.
-docs/boolean-parser.d2         The README diagram's source (docs/boolean-parser.svg is rendered from it).
+docs/API.md                    The API reference, the grammar, errors and caveats.
 ARCHITECTURE.md                Internal design: the lexer, the shunting-yard, the AST build.
 ```
 

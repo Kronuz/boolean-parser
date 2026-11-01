@@ -88,7 +88,7 @@ release tags yet, so entries are dated.
     class, returned to the heap when the thread ends). The cache is off under
     AddressSanitizer and MemorySanitizer, and with `BOOLEAN_PARSER_NO_NODE_CACHE`.
   - `bench/bench_bool.cc` (Apple M4 Pro, Apple clang 17, `-O3`; ns per parse, median of three
-    interleaved rounds under `quiet strict`; before is `e099477`):
+    interleaved rounds on reserved cores; before is `e099477`):
 
     | workload | before | after | arena climber |
     |---|---:|---:|---:|
@@ -109,7 +109,7 @@ release tags yet, so entries are dated.
     pays the heap for most of its nodes. The honest remaining gap on the M4 Pro is
     1.4 to 1.7 times on short queries, 2.1 times at 16 to 128 terms and 3.1 times at 1,024
     (on the i9: parity to 1.8 times, 2.4 to 2.5 times, 4.4 times); closing it needs an arena
-    owner type in the node API, which is the owner's decision.
+    owner type in the node API.
 
 - The oracle test runs to length 7 by default, and to length 5 (4 for the wide
   vocabulary) with 3,000 random sequences under ASan and TSan. `BP_MAX_LEN`
