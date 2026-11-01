@@ -18,7 +18,10 @@
 // Build via CMake: cmake -B build && cmake --build build && ctest --test-dir build
 #include <cassert>
 #include <cstdio>
+#include <cstdlib>
+#include <iostream>
 #include <pthread.h>
+#include <sstream>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -280,14 +283,51 @@ static void test_errors() {
 		assert(!msg.empty());
 	}
 
-	// Dangling operators (e.g. "a AND AND b", "a AND", "AND a") produce an RPN
-	// with more operators than operands. The ctor succeeds (the RPN is well-formed
-	// as a token stream); Parse() throws SyntacticException, so the throw is
-	// exercised there.
-	for (const char* bad : {"a AND AND b", "a AND", "AND a", "a OR OR b"}) {
+	// A queue the constructor returns is empty or one well-formed expression, so
+	// everything a walk of the RPN queue (or Parse()) would trip over throws here:
+	// an operator without its operands, an empty group, a parenthesis left open.
+	// The messages are the ones Parse() gives for the same queue.
+	struct Bad { const char* input; const char* what; };
+	const Bad bad_inputs[] = {
+		{"a AND AND b", "Unexpected end of expression"},
+		{"a AND b AND", "Unexpected end of expression"},
+		{"a b c OR", "Unexpected end of expression"},
+		{"a AND", "Unexpected end of expression"},
+		{"AND a", "Unexpected end of expression"},
+		{"a OR OR b", "Unexpected end of expression"},
+		{"a NOT", "Unexpected end of expression"},
+		{"NOT", "Unexpected end of expression"},
+		{"a ()", "Unexpected end of expression"},
+		{"( ) a", "Unexpected end of expression"},
+		{"a ( NOT )", "Unexpected end of expression"},
+		{"(a", "'(' not expected"},
+		{"a (", "'(' not expected"},
+		{"(", "'(' not expected"},
+		{"((a)", "'(' not expected"},
+		{"a AND (b OR c", "'(' not expected"},
+		{"(((", "'(' not expected"},
+	};
+	for (const auto& bad : bad_inputs) {
+		std::string msg;
+		try {
+			BooleanTree tree(bad.input);
+			msg = "no exception";
+		} catch (const SyntacticException& e) {
+			msg = e.what();
+		}
+		if (msg != bad.what) {
+			std::fprintf(stderr, "[%s]: expected \"%s\", got \"%s\"\n", bad.input, bad.what, msg.c_str());
+			std::abort();
+		}
+	}
+
+	// Input with no operand at all (blank, or only empty groups) is not an error for the
+	// constructor: the queue is empty. Parse() has nothing to build and throws.
+	for (const char* blank : {"", " ", "\t\n", "()", "( ( ) )"}) {
+		BooleanTree tree(blank);
+		assert(tree.empty() && tree.size() == 0);
 		bool threw = false;
 		try {
-			BooleanTree tree(bad);
 			tree.Parse();
 		} catch (const SyntacticException&) {
 			threw = true;
@@ -296,6 +336,103 @@ static void test_errors() {
 	}
 
 	std::printf("errors OK: malformed inputs throw Lexical/Syntactic exceptions\n");
+}
+
+
+// ---------------------------------------------------------------------------
+// 8. PrintTree() visits every node type.
+// ---------------------------------------------------------------------------
+
+// The expression of a tree in order, spelled by node type, built independently of
+// PrintTree().
+static std::string inorder(BaseNode* node) {
+	switch (node->getType()) {
+		case NodeType::AND: {
+			auto* n = static_cast<AndNode*>(node);
+			return "(" + inorder(n->getLeftNode()) + " AND " + inorder(n->getRightNode()) + ")";
+		}
+		case NodeType::MAYBE: {
+			auto* n = static_cast<MaybeNode*>(node);
+			return "(" + inorder(n->getLeftNode()) + " MAYBE " + inorder(n->getRightNode()) + ")";
+		}
+		case NodeType::OR: {
+			auto* n = static_cast<OrNode*>(node);
+			return "(" + inorder(n->getLeftNode()) + " OR " + inorder(n->getRightNode()) + ")";
+		}
+		case NodeType::XOR: {
+			auto* n = static_cast<XorNode*>(node);
+			return "(" + inorder(n->getLeftNode()) + " XOR " + inorder(n->getRightNode()) + ")";
+		}
+		case NodeType::NOT:
+			return "(NOT " + inorder(static_cast<NotNode*>(node)->getNode()) + ")";
+		case NodeType::ID:
+			return static_cast<IdNode*>(node)->getId();
+	}
+	return "?";
+}
+
+// What PrintTree() writes, with the layout (spaces and line breaks) removed, read as
+// a sequence of words: it lists the leaves and the operators in order.
+static std::string printed_words(BooleanTree& tree) {
+	std::ostringstream out;
+	auto* saved = std::cout.rdbuf(out.rdbuf());
+	tree.PrintTree();
+	std::cout.rdbuf(saved);
+	std::string words;
+	for (char c : out.str()) {
+		if (c == ' ' || c == '\n') {
+			if (!words.empty() && words.back() != ' ') words += ' ';
+		} else {
+			words += c;
+		}
+	}
+	while (!words.empty() && words.back() == ' ') words.pop_back();
+	return words;
+}
+
+// The words of the expected in-order form: the operators and the leaves, no brackets.
+static std::string words_of(const std::string& expr) {
+	std::string words;
+	for (char c : expr) {
+		if (c != '(' && c != ')') words += c;
+	}
+	return words;
+}
+
+static void test_print_tree() {
+	// One tree per node type, then all of them together.
+	const char* inputs[] = {
+		"a MAYBE b", "a AND b", "a OR b", "a XOR b", "NOT a", "a",
+		"a MAYBE b MAYBE c", "NOT (a MAYBE b)", "(a AND b) MAYBE (c XOR NOT d)",
+		"a OR b XOR c MAYBE d AND NOT e",
+	};
+	for (const char* input : inputs) {
+		BooleanTree tree(input);
+		tree.Parse();
+		const auto want = words_of(inorder(tree.root.get()));
+		const auto got = printed_words(tree);
+		if (want != got) {
+			std::fprintf(stderr, "PrintTree [%s]: expected \"%s\", got \"%s\"\n", input, want.c_str(), got.c_str());
+			std::abort();
+		}
+	}
+	// The exact layout for the node type that read the wrong class: the left subtree
+	// indented four columns, the operator, the right subtree indented four.
+	{
+		BooleanTree tree("a MAYBE b");
+		tree.Parse();
+		std::ostringstream out;
+		auto* saved = std::cout.rdbuf(out.rdbuf());
+		tree.PrintTree();
+		std::cout.rdbuf(saved);
+		assert(out.str() == "    a\n MAYBE\n     b\n ");
+	}
+	// Nothing to print before Parse().
+	{
+		BooleanTree tree("a MAYBE b");
+		assert(printed_words(tree).empty());
+	}
+	std::printf("print OK: PrintTree walks every node type\n");
 }
 
 
@@ -381,6 +518,7 @@ int main() {
 	test_list_syntax();
 	test_parse_ast();
 	test_errors();
+	test_print_tree();
 	std::printf("all boolean-parser tests passed\n");
 	return 0;
 }

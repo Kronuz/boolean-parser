@@ -68,6 +68,19 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
     target_link_libraries(boolean_parser_bench PRIVATE boolean_parser)
   endif()
 
+  # libFuzzer target (clang): see the header of test/fuzz.cc for the flags. The whole build takes the
+  # sanitizer flags; the target adds the fuzzer runtime and its instrumentation.
+  #   cmake -B build-fuzz -DBOOLEAN_PARSER_FUZZ=ON -DCMAKE_CXX_COMPILER=clang++ \
+  #         -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-sanitize-recover=undefined -g -O1"
+  option(BOOLEAN_PARSER_FUZZ "Build the libFuzzer target" OFF)
+  if(BOOLEAN_PARSER_FUZZ)
+    add_executable(boolean_parser_fuzz test/fuzz.cc test/new_dump.cc)
+    target_include_directories(boolean_parser_fuzz PRIVATE test)
+    target_compile_options(boolean_parser_fuzz PRIVATE -fsanitize=fuzzer)
+    target_link_options(boolean_parser_fuzz PRIVATE -fsanitize=fuzzer)
+    target_link_libraries(boolean_parser_fuzz PRIVATE boolean_parser)
+  endif()
+
   # A runnable tour of the library (not a test): build & run ./build/boolean_parser_demo
   add_executable(boolean_parser_demo examples/demo.cc)
   target_link_libraries(boolean_parser_demo PRIVATE boolean_parser)

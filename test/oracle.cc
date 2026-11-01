@@ -99,6 +99,9 @@ void check(const std::vector<Tok>& toks, bool with_old) {
 	auto got = new_dump(in);
 	++n_checked;
 	if (want.ok == has_exception(got)) fail(want.ok ? "oracle accepts, library rejects" : "oracle rejects, library accepts", in, want.ok ? oracle::dump(want) : "(reject)", got);
+	// A queue the constructor returns always parses, unless it is empty: the dump of
+	// a constructed tree reads "size=N ..." and only then reports Parse()'s exception.
+	if (got.rfind("size=", 0) == 0 && got.rfind("size=0 ", 0) != 0 && has_exception(got)) fail("constructor returned a queue Parse() rejects", in, "(reject)", got);
 	if (want.ok) {
 		++n_accepted;
 		if (got != oracle::dump(want)) fail("tree/RPN differ from oracle", in, oracle::dump(want), got);

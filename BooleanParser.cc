@@ -65,6 +65,7 @@ BooleanTree::BooleanTree(std::string_view input_)
 	stack_output.reserve(16);
 	stack_operator.reserve(8);
 	toRPN();
+	validate();
 }
 
 
@@ -317,6 +318,45 @@ BooleanTree::toRPN()
 }
 
 
+/*
+ * A queue the constructor returns is empty or one well-formed RPN expression: every
+ * operator finds its operands, no parenthesis is left, and one value remains. The
+ * check folds the queue the way BuildTree() does, and throws what it throws for the
+ * same token. Operands cannot outnumber the operators by more than one, because every
+ * pair of adjacent operands is joined by an operator, explicit or implicit.
+ */
+void
+BooleanTree::validate() const
+{
+	std::size_t operands = 0;
+	for (const auto& token : stack_output) {
+		switch (token.get_type()) {
+			case TokenType::Id:
+				++operands;
+				break;
+			case TokenType::Not:
+				if (operands < 1) {
+					throw SyntacticException("Unexpected end of expression");
+				}
+				break;
+			case TokenType::Or:
+			case TokenType::And:
+			case TokenType::Maybe:
+			case TokenType::Xor:
+				if (operands < 2) {
+					throw SyntacticException("Unexpected end of expression");
+				}
+				--operands;
+				break;
+			default: {
+				std::string msj = "'" + token.get_lexeme() + "' not expected";
+				throw SyntacticException(msj.c_str());
+			}
+		}
+	}
+}
+
+
 unsigned
 BooleanTree::precedence(TokenType type)
 {
@@ -369,8 +409,8 @@ BooleanTree::postorder(BaseNode* p, int indent)
 					std::cout << std::setw(indent) << ' ';
 				}
 				std::cout << "MAYBE" << "\n ";
-				if (dynamic_cast<AndNode*>(p)->getRightNode() != nullptr) {
-					postorder(dynamic_cast<AndNode*>(p)->getRightNode(), indent + 4);
+				if (dynamic_cast<MaybeNode*>(p)->getRightNode() != nullptr) {
+					postorder(dynamic_cast<MaybeNode*>(p)->getRightNode(), indent + 4);
 				}
 				break;
 			case NodeType::OR:

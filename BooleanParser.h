@@ -90,6 +90,7 @@ public:
 
 private:
 	void toRPN();
+	void validate() const;
 	std::unique_ptr<BaseNode> BuildTree();
 	void release_root();
 	unsigned precedence(TokenType type);

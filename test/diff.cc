@@ -17,8 +17,17 @@ std::string new_dump(std::string_view input);
 static size_t checked = 0, errors = 0, trees = 0;
 
 static size_t deliberate = 0;
+static size_t ctor_rejections = 0;
 
 static bool has_exception(const std::string& d) { return d.find("Exception") != std::string::npos; }
+
+// The constructor rejects a queue the original returned and then rejected in Parse(): the
+// original's dump is the queue followed by Parse()'s exception, the library's is that
+// exception alone (same kind, same message).
+static bool constructor_rejection(const std::string& a, const std::string& b) {
+	if (a.rfind("size=", 0) != 0 || b.rfind("SyntacticException: ", 0) != 0 || a.size() <= b.size()) { return false; }
+	return a.compare(a.size() - b.size(), b.size(), b) == 0 && a[a.size() - b.size() - 1] == '\n' && a.find("TREE:") == std::string::npos;
+}
 
 // The library and the frozen original differ on a defined class of inputs (see oracle.h,
 // `changed_class`); both lex alike, so classify by the lexer's tokens. Inside
@@ -59,6 +68,7 @@ static void check(const std::string& in) {
 	auto b = new_dump(in);
 	++checked;
 	if (has_exception(a)) { ++errors; } else { ++trees; }
+	if (a != b && constructor_rejection(a, b)) { ++ctor_rejections; return; }
 	if (a != b && deliberate_difference(in, b)) { ++deliberate; return; }
 	if (a != b) {
 		std::fprintf(stderr, "MISMATCH for input [%s] (len %zu)\n--- old ---\n%s\n--- new ---\n%s\n", in.c_str(), in.size(), a.c_str(), b.c_str());
@@ -140,6 +150,7 @@ int main() {
 		check(nest + "a" + std::string(499, ')'));
 	}
 	std::printf("boolean differential OK: %zu inputs (%zu parse, %zu error); %zu differ from the frozen original only inside the\n"
-	            "deliberately changed precedence classes, where the library equals the oracle; all others identical\n", checked, trees, errors, deliberate);
+	            "deliberately changed precedence classes, where the library equals the oracle; %zu are rejected by the constructor\n"
+	            "with the exception the original raised in Parse(); all others identical\n", checked, trees, errors, deliberate, ctor_rejections);
 	return 0;
 }
