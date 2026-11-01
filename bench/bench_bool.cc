@@ -1,6 +1,7 @@
 // boolean-parser: BooleanTree (lex + shunting-yard + Parse) against the frozen original
 // (test/frozen, names prefixed "Old") and a hand-written precedence-climbing parser with an
-// arena and string_view lexemes (a floor: it builds no heap nodes). Time under a quiet hold.
+// arena and string_view lexemes (a floor: it builds no heap nodes) that builds the same tree,
+// checked for every input before it is timed. Time under a quiet hold.
 #include <cstring>
 #include <memory>
 #include <random>
@@ -62,7 +63,7 @@ struct P {
 			int p = prec(op);
 			if (p > maxprec) break;
 			if (!implicit) next();
-			int rhs = expr(p);   // the shunting-yard here pops only strictly tighter ops: right-associative
+			int rhs = expr(p - 1);   // an operator of the same precedence ends the right operand: left associative
 			lhs = mk(op, {}, lhs, rhs);
 		}
 		return lhs;
@@ -70,7 +71,7 @@ struct P {
 };
 static void dump(const P& p, int n, std::string& o) {
 	const Node& x = p.arena[n];
-	if (x.op == -1) { o += x.s; return; }
+	if (x.op == -1) { o += std::to_string(x.s.size()) + ":" + std::string(x.s); return; }
 	if (x.op == NOT) { o += "(NOT "; dump(p, x.l, o); o += ')'; return; }
 	o += x.op == AND ? "(AND " : x.op == OR ? "(OR " : x.op == XOR ? "(XOR " : "(MAYBE ";
 	dump(p, x.l, o); o += ' '; dump(p, x.r, o); o += ')';
@@ -103,8 +104,16 @@ int main() {
 	for (int t : {16, 128, 1024}) inputs.push_back({std::to_string(t) + " terms random", gen(t, rng, t != 1024)});
 	inputs.push_back({"deep nest 200", std::string(200, '(') + "x" + std::string(200, ')')});
 	for (auto& [name, q] : inputs) {
-		// Chains of one operator group left (new) or right (old) now, so the dumps differ in
-		// shape; both must parse. test/oracle.cc and test/diff.cc check the results.
+		// The climber must build the very tree BooleanTree builds: its dump is compared with the
+		// library's before anything is timed. The frozen original groups chains of one operator
+		// to the right, so only whether it parses is compared with it.
+		{
+			cmp::P p{q}; p.next(); int r = p.expr(4);
+			std::string tree, lib = new_dump(q);
+			if (p.ok) { cmp::dump(p, r, tree); }
+			auto at = lib.find("TREE: ");
+			if (!p.ok || p.cur.t != cmp::END || at == std::string::npos || lib.substr(at + 6) != tree) { std::printf("CLIMBER MISMATCH %s\n", name.c_str()); return 1; }
+		}
 		if ((old_dump(q).find("Exception") == std::string::npos) != (new_dump(q).find("Exception") == std::string::npos)) { std::printf("MISMATCH %s\n", name.c_str()); return 1; }
 		auto fo = [&](uint64_t n) { for (uint64_t i = 0; i < n; ++i) { bh::use(old_parse(q)); } };
 		auto fn = [&](uint64_t n) { for (uint64_t i = 0; i < n; ++i) { bh::use(new_parse(q)); } };

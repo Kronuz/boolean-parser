@@ -4,6 +4,14 @@ All notable changes to this library. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The library has no
 release tags yet, so entries are dated.
 
+## 2026-11-01
+
+### Changed
+
+- The benchmark's precedence-climbing comparator groups chains of one operator to the left, as
+  `BooleanTree` does, and `boolean_parser_bench` compares the tree it builds with the
+  library's tree for every input before it times anything.
+
 ## 2026-10-31
 
 ### Documentation
