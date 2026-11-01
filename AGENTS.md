@@ -13,8 +13,10 @@ BooleanLexer.{h,cc}            The lexer state machine: tokens, quotes, [a,b,c] 
 ContentReader.{h,cc}           Byte-at-a-time reader (tracks line/column). Kept for API compatibility; the lexer does not use it (it reads the buffer by pointer and applies the same "\n\r" pair rule).
 test/diff.cc                   Differential test (CTest `boolean_parser_diff`) against test/frozen, the original sources compiled with `Old`-prefixed names; the two differ only in the precedence classes of test/oracle.h `changed_class`.
 test/oracle.{h,cc}             Reference recursive-descent parser and the exhaustive/random oracle test (CTest `boolean_parser_oracle`; BP_MAX_LEN=9 for the deepest run, default 7).
+test/fuzz.cc, test/fuzz.dict   libFuzzer target with a grammar-aware mutator: queue well-formedness, accept/reject and tree against the oracle, PrintTree (cmake -DBOOLEAN_PARSER_FUZZ=ON, clang).
 bench/bench_bool.cc            Benchmark vs the frozen original and an arena precedence-climbing parser (cmake -DBOOLEAN_PARSER_BENCH=ON).
 BooleanToken.h                 Token + TokenType (Not/Or/And/Maybe/Xor/parens/Id/EndOfFile). Header.
+BooleanTokenVector.h           TokenVector<N>: the RPN queue and the operator stack, the first N tokens inside the object. Header.
 BooleanNode.h                  BaseNode + NodeType. Header.
 And/Or/Not/Xor/Maybe/IdNode.h  The AST node types. Headers.
 LexicalException.h             Lexer error; owns a std::string. Header.
@@ -93,6 +95,12 @@ exposes the repo root as a `PUBLIC` include. The test target is
 - **Quoted phrases and `[a,b,c]` lists are a single `Id` token** whose lexeme
   keeps its delimiters. The lexer's `TOKEN_QUOTE` / `INIT_SQUARE_BRACKET` /
   `END_SQUARE_BRACKET` states implement this; the test pins both.
+- **The constructor returns an empty queue or one well-formed RPN expression.**
+  `validate()` runs after `toRPN()` and throws what `BuildTree()` throws for the same
+  token, so a consumer that walks the queue and never calls `Parse()` meets no operator
+  without operands and no parenthesis. `test/test.cc` pins the messages, `test/oracle.cc`
+  checks every token sequence (a returned queue always parses), and `test/diff.cc` lists
+  these rejections as their own class. Keep the check in sync with `BuildTree()`.
 - **Both exceptions own their message `std::string`.** Every throw site builds
   the message in a temporary `std::string` and passes `.c_str()`, so a borrowed
   `const char*` dangles the moment the throw unwinds the frame. Don't make either
@@ -121,6 +129,12 @@ left associative. A term, `(` or `NOT` right after a term or `)` takes the impli
   `BuildTree()` calls in one argument list swapped MAYBE's operands under clang
   (argument evaluation order is unspecified). Trees up to 64 deep are destroyed by
   ordinary recursion, which keeps the common case allocation-free.
+- **Nodes come from a per-thread block cache.** `BaseNode::operator new` and `operator delete`
+  (`BooleanParser.cc`) keep freed blocks of up to 64 bytes per 16-byte class, up to 256 per
+  class per thread, and free them at thread exit. Both use one `node_class()`, and a block is
+  allocated at its class size: a smaller block in a larger class's list overflows when it is
+  reused. ASan and MSan builds skip the cache (`BOOLEAN_PARSER_NO_NODE_CACHE`) so they still
+  see a use after free. `test/test.cc` builds trees across threads and holds many alive.
 - **`get_lexeme()` returns the raw source text.** For a quoted phrase the lexeme
   still has the quotes; for a list it still has the brackets and commas. Consumers
   that want the inner value strip the delimiters themselves. Don't silently change
@@ -140,7 +154,7 @@ ways, each listed with its date in `CHANGELOG.md`:
   declaration. Xapiand's `query_dsl.cc` uses only the RPN token queue and the two
   exception types, never the AST or any Xapian type.
 - `SyntacticException` owns its message.
-- The lexer scans by pointer, tokens move, and the RPN queue is a vector.
+- The lexer scans by pointer, tokens move, and the RPN queue and operator stack keep their first tokens inside the object.
 - The implicit `OR` obeys precedence and binary operators are left associative.
 
 `test/frozen` keeps the Xapiand originals for the differential test. Keep

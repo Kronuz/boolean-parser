@@ -24,8 +24,9 @@ run in the constructor; the fourth is `Parse()`, called on demand.
 
 ## Stage 1: the input buffer
 
-The constructor copies the input into an owned NUL-terminated `char[]` buffer (so a
-transient `std::string_view` argument is safe). The lexer holds pointers into it
+The constructor copies the input into an owned NUL-terminated buffer (so a
+transient `std::string_view` argument is safe): 128 bytes inside the object, a heap
+`char[]` for longer input. The lexer holds pointers into it
 (`cs`, `pos`) and peeks one symbol ahead; `'\0'` is the end of input. Like
 `ContentReader` (which stays in the repo for API compatibility; the lexer does not
 use it), it treats a `"\n\r"` or `"\r\n"` pair as one symbol, so the second byte
@@ -70,8 +71,12 @@ commas*. Stripping delimiters is the consumer's job.
 ## Stage 3: shunting-yard to RPN
 
 `toRPN()` is Dijkstra's shunting-yard. It pulls tokens from the lexer and
-maintains two structures: `stack_output` (a `std::vector<Token>` with a head index, the growing RPN
-queue; one allocation instead of a heap node per token) and `stack_operator` (a `std::vector<Token>`, the operator stack).
+maintains two structures: `stack_output` (the growing RPN queue, with a head index) and
+`stack_operator` (the operator stack). Both are `TokenVector`s (`BooleanTokenVector.h`):
+the first 16 (queue) or 8 (stack) tokens live inside the `BooleanTree`, so an ordinary query
+allocates nothing here; a longer one moves all its tokens into a `std::vector`, which grows as
+usual. A `BooleanTree` is a little over 1 KB for
+that reason: build it on the stack, as the examples do.
 
 - An `Id` goes to the output queue. When it follows an operand (an `Id` or `)`), the
   default operator (`DEFAULT_OPERATOR` = `Or`) is first pushed as if written, after
@@ -95,6 +100,14 @@ queue; one allocation instead of a heap node per token) and `stack_operator` (a 
 - `(` is pushed; `)` pops operators into the output until the matching `(`,
   throwing `SyntacticException` if no `(` is found (unbalanced parens).
 - At EOF, any operators left on the stack are flushed to the output.
+
+When the input ends, `validate()` folds the queue with a counter, the way `BuildTree()`
+folds it with nodes: an operator needs its operands, a parenthesis left in the queue (an
+unclosed `(`) is not an RPN token, and the same messages are thrown. A queue that passes
+is empty (no operand at all) or one expression, so the constructor throws for every
+malformed input and `Parse()` only fails on a queue that was changed after construction.
+Operands cannot outnumber the operators by more than one: every pair of adjacent operands
+is joined by an operator, explicit or implicit.
 
 The result in `stack_output` is the expression in RPN, e.g.
 `a OR (b AND NOT c)` → `a b c NOT AND OR`. This queue is the primary public
@@ -122,6 +135,14 @@ The node types (`AndNode`, `OrNode`, `NotNode`, `XorNode`, `MaybeNode`,
 term string) and reports a `NodeType`. Walking the tree is `getType()` plus the
 per-node child getters.
 
+Most of the cost of `Parse()` is one allocation per node, so `BaseNode` has class-specific
+`operator new` and `operator delete` (`BooleanParser.cc`) that keep freed blocks of up to
+64 bytes in a per-thread list for each 16-byte size class. A block is always allocated at
+its class size, so a block freed by one node type serves any other of its class. A thread
+keeps at most 256 blocks per class and frees them when it ends, and a block is an ordinary
+heap block, so a tree may be destroyed on another thread. Children are plain
+`unique_ptr<BaseNode>` with the default deleter.
+
 ## Error handling
 
 Two exception types, both plain `std::exception` subclasses owning a
@@ -129,12 +150,13 @@ Two exception types, both plain `std::exception` subclasses owning a
 
 - `LexicalException`, from the lexer: unterminated quote, unclosed `[`,
   oversized token, an EOF where a close was expected.
-- `SyntacticException`, from the shunting-yard (`)` with no matching `(`) and
-  from `Parse()` (an unexpected leftover token).
+- `SyntacticException`, from the shunting-yard (`)` with no matching `(`), from
+  `validate()` (an operator without its operands, an unclosed `(`) and from `Parse()`
+  (the same, for a queue changed after construction).
 
-Because lexing and the shunting-yard run in the constructor, a malformed input
-throws at construction. `Parse()` can throw later for a structurally invalid RPN
-queue.
+Because lexing, the shunting-yard and `validate()` run in the constructor, a malformed
+input throws at construction. `Parse()` can throw later only for a queue that was changed
+after construction (or is empty).
 
 Every throw site builds its message in a local `std::string` and passes
 `.c_str()`, so both exceptions copy it into a `std::string` they own. The message

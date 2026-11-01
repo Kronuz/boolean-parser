@@ -1,5 +1,14 @@
 build/
+build-*/
+cmake-build-*/
+dbg/
+ubsan/
+asan/
+tsan/
+*.dSYM/
+.scratch/
 *.o
+*.a
 *.out
 test/test
 /tmp/

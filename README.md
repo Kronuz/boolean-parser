@@ -22,7 +22,9 @@ syntax, filters, and rule languages.
 - **Phrases and lists.** `"quoted phrases"` and `[a,b,c]` lists arrive as single
   terms; adjacent terms join with `OR`.
 - **Clear errors.** Malformed input throws `LexicalException` or
-  `SyntacticException` with a message, never undefined behavior.
+  `SyntacticException` with a message, never undefined behavior. A queue the
+  constructor returns is empty or one well-formed RPN expression: every operator
+  has its operands and no parenthesis is left in it.
 
 ## 📦 Installation
 
@@ -80,7 +82,22 @@ which has the loosest precedence like an explicit one:
 
 `test/oracle.cc` checks this grammar against an independent recursive-descent parser
 on every token sequence over a small vocabulary up to length 7 (8 and 9 with `BP_MAX_LEN`)
-and on random longer ones.
+and on random longer ones. `test/fuzz.cc` is a libFuzzer target that checks the same
+parser, and the well-formedness of the queue, on mutated inputs.
+
+## 🚫 Errors
+
+The constructor lexes and builds the queue, so malformed input throws there:
+
+| input | exception |
+|---|---|
+| `"unterminated`, `[a` | `LexicalException` |
+| `a )`, `a AND b )` | `SyntacticException`: `) was expected` |
+| `(a`, `a (`, `a AND (b` | `SyntacticException`: `'(' not expected` |
+| `a NOT`, `a AND`, `AND a`, `a ()`, `( ) a` | `SyntacticException`: `Unexpected end of expression` |
+
+Input with no operand at all (blank, or only empty groups such as `()`) gives an empty
+queue; `Parse()` throws on it.
 
 ## 🎯 When to use it
 
@@ -100,32 +117,46 @@ and on random longer ones.
 ## ⚡ Performance
 
 The lexer scans the input by pointer and builds each lexeme with one allocation
-(none up to the small-string size). Tokens move through the shunting-yard, and
-the output queue is a vector with a head index (one allocation).
+(none up to the small-string size). Tokens move through the shunting-yard. The
+token queue, the operator stack and the input copy live inside the `BooleanTree`
+for an ordinary query (16 tokens, 8 operators, 128 bytes), so they allocate
+nothing. The nodes come from a per-thread cache of freed blocks behind
+`BaseNode`'s `operator new`, so a second parse on a thread reuses the first one's
+blocks (up to 256 per 16-byte size class).
 
 `bench/bench_bool.cc` times a full parse (`BooleanTree`: lex, shunting-yard, and
 `Parse()`) against a precedence-climbing parser with an arena and `string_view`
 lexemes. That parser builds no heap nodes, so it is a floor. Apple M4 Pro, Apple clang
-17 with `-O3 -DNDEBUG -std=gnu++17`, ns per parse (median of 9 trials of about 40 ms;
-repeated runs agree within 5%), measured under `quiet strict` at `adf5b11`:
+17 with `-O3 -DNDEBUG`, ns per parse (median of three interleaved runs of the benchmark,
+each the median of about 40 ms trials), measured under `quiet strict`. "Before" is
+`e099477`, the parser without the allocation changes:
 
-| Input | BooleanTree | Precedence climbing |
-|---|---:|---:|
-| `alpha AND beta` | 164 ns | 58 ns |
-| 5 terms, mixed operators | 320 ns | 118 ns |
-| A typical field query | 344 ns | 136 ns |
-| 16 random terms | 1.40 µs | 0.50 µs |
-| 128 random terms | 11.1 µs | 3.95 µs |
-| 1,024 random terms | 107 µs | 32.9 µs |
-| 200 nested parentheses | 2.59 µs | 2.96 µs |
+| Input | Before | Now | Precedence climbing |
+|---|---:|---:|---:|
+| `alpha AND beta` | 156 ns | 80 ns | 56 ns |
+| 5 terms, mixed operators | 315 ns | 196 ns | 119 ns |
+| A typical field query | 342 ns | 218 ns | 133 ns |
+| 16 random terms | 1.36 µs | 1.04 µs | 0.49 µs |
+| 128 random terms | 10.8 µs | 8.35 µs | 4.01 µs |
+| 1,024 random terms | 104 µs | 104 µs | 33.7 µs |
+| 200 nested parentheses | 2.59 µs | 2.53 µs | 2.94 µs |
+
+On an Intel i9-9980HK (Apple clang 17, same flags) the same rows read 464, 942, 955 ns,
+3.74, 30.0 and 256 µs before, and 146, 395, 401 ns, 2.04, 17.6 and 252 µs now, against
+160, 273, 220 ns, 0.85, 7.09 and 56.6 µs for the precedence climber (200 nested
+parentheses: 6.15 µs before, 5.29 µs now, 4.65 µs).
 
 ```sh
 cmake -B build -DBOOLEAN_PARSER_BENCH=ON -DCMAKE_BUILD_TYPE=Release
 cmake --build build && ./build/boolean_parser_bench
 ```
 
-The precedence climber is 2.5 to 3.3 times faster on ordinary queries because it
-allocates no nodes. `BooleanTree` is faster on deeply nested input.
+The precedence climber is 1.4 to 1.7 times faster on short queries, about 2.1 times
+on 16 to 128 terms and 3.1 times on 1,024, where the node cache (256 blocks per
+size class) is too small for the tree. It builds no nodes, while `BooleanTree` builds
+one virtual node per term and operator behind `unique_ptr`; closing the rest of the
+gap needs an arena owner type in the node API. `BooleanTree` is faster on deeply nested
+input.
 
 ## 🛠️ Building and testing
 

@@ -162,11 +162,13 @@ int main() {
 
 	// --- 5. malformed input is rejected --------------------------------------
 	rule("malformed input throws instead of producing a tree");
-	try {
-		BooleanTree bad("a AND b )");   // a stray ) with nothing to close
-		(void)bad;
-	} catch (const SyntacticException& e) {
-		std::printf("  input : a AND b )\n  error : SyntacticException -> %s\n", e.what());
+	for (const char* input : {"a AND b )", "(a", "a NOT"}) {   // a stray ), an unclosed (, an operator without an operand
+		try {
+			BooleanTree bad(input);
+			(void)bad;
+		} catch (const SyntacticException& e) {
+			std::printf("  input : %s\n  error : SyntacticException -> %s\n", input, e.what());
+		}
 	}
 
 	std::puts("\ndone.");
