@@ -1,7 +1,7 @@
 // boolean-parser: BooleanTree (lex + shunting-yard + Parse) against the frozen original
 // (test/frozen, names prefixed "Old") and a hand-written precedence-climbing parser with an
 // arena and string_view lexemes (a floor: it builds no heap nodes) that builds the same tree,
-// checked for every input before it is timed. Time under a quiet hold.
+// checked for every input before it is timed. Time it on an otherwise idle machine.
 #include <cstring>
 #include <memory>
 #include <random>

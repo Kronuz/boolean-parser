@@ -62,6 +62,55 @@ Expected output ends with `all boolean-parser tests passed`, exit 0. The CMake
 exposes the repo root as a `PUBLIC` include. The test target is
 `boolean_parser_test`; the registered CTest name is `boolean_parser`.
 
+## Verification and benchmarks
+
+The method shared by the Kronuz libraries is in
+[docs/PERFORMANCE.md](https://github.com/Kronuz/cpp-libraries/blob/main/docs/PERFORMANCE.md).
+
+- **Tests.** `ctest` runs `boolean_parser`, `boolean_parser_diff` and `boolean_parser_oracle`.
+- **Differential.** `boolean_parser_diff` compares the RPN queue, the tree and the exception text
+  with the frozen original in `test/frozen/` (compiled with every name prefixed `Old`, never
+  edited). The two differ only in the classes `changed_class` in `test/oracle.h` names.
+- **Oracle.** `boolean_parser_oracle` checks accept or reject, RPN and tree against the
+  recursive-descent parser in `test/oracle.h`, written from the grammar: every token sequence up
+  to length 7 (5 under ASan or TSan) plus random longer ones. `BP_MAX_LEN=9` in the environment
+  runs the deep sweep (minutes).
+- **Sanitizers.** CI (`.github/workflows/ci.yml`, which calls the shared
+  [cmake.yml](https://github.com/Kronuz/cpp-libraries/blob/main/.github/workflows/cmake.yml))
+  runs every test under ASan+UBSan and under TSan (the node cache is per thread, and
+  `test/test.cc` builds trees across threads), clang on Linux. ASan builds skip the node cache:
+
+  ```sh
+  CC=clang CXX=clang++ cmake -B build-asan -DCMAKE_BUILD_TYPE=Debug \
+    -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-sanitize-recover=undefined -fno-omit-frame-pointer -D_GLIBCXX_ASSERTIONS" \
+    -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
+  cmake --build build-asan && ASAN_OPTIONS=detect_leaks=1 ctest --test-dir build-asan --output-on-failure
+  CC=clang CXX=clang++ cmake -B build-tsan -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+    -DCMAKE_CXX_FLAGS_RELWITHDEBINFO="-O1 -g -fsanitize=thread -fno-omit-frame-pointer" \
+    -DCMAKE_EXE_LINKER_FLAGS=-fsanitize=thread
+  cmake --build build-tsan && TSAN_OPTIONS="halt_on_error=1 second_deadlock_stack=1" ctest --test-dir build-tsan --output-on-failure
+  ```
+
+- **Fuzzing.** `test/fuzz.cc` (grammar-aware mutator; checks the queue with its own stack machine
+  and the tree against the oracle). Its header has the build, with clang and libFuzzer:
+  `-DBOOLEAN_PARSER_FUZZ=ON` and ASan+UBSan flags; run
+  `build-fuzz/boolean_parser_fuzz -max_len=2048 -dict=test/fuzz.dict corpus/` (no corpus is committed).
+- **Benchmark.** `-DBOOLEAN_PARSER_BENCH=ON` builds `boolean_parser_bench` (`bench/bench_bool.cc`):
+  each workload timed twice (`current #1`, `current #2 (A/A)`) beside the frozen original and an
+  arena precedence-climbing parser, whose tree must equal the library's before it is timed.
+  Numbers: the README's Performance section. To compare two commits, build the bench at each and
+  run both with `tools/ab_compare.py` from a clone of
+  [cpp-libraries](https://github.com/Kronuz/cpp-libraries) beside this one; it runs A, B and A
+  again (the A/A control) every round:
+
+  ```sh
+  git worktree add ../boolean-parser-base BASE_COMMIT
+  cmake -S ../boolean-parser-base -B build-base -DCMAKE_BUILD_TYPE=Release -DBOOLEAN_PARSER_BENCH=ON && cmake --build build-base --target boolean_parser_bench
+  cmake -B build-bench -DCMAKE_BUILD_TYPE=Release -DBOOLEAN_PARSER_BENCH=ON && cmake --build build-bench --target boolean_parser_bench
+  python3 ../cpp-libraries/tools/ab_compare.py run --rounds 7 --include "current #1" \
+    build-base/boolean_parser_bench build-bench/boolean_parser_bench
+  ```
+
 ## Conventions
 
 - **C++17.** The code uses `std::string_view` and `[[fallthrough]]` and nothing
