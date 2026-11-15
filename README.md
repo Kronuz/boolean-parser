@@ -114,6 +114,8 @@ build/boolean_parser_bench
 
 ## 📚 Documentation
 
+- [The Shunting Yard](https://kronuz.github.io/blog/boolean-parser/):
+  the Familiars post on why it exists and how it works.
 - [docs/API.md](docs/API.md): `BooleanTree`, tokens, AST nodes, the grammar, errors and
   caveats.
 - [ARCHITECTURE.md](ARCHITECTURE.md): the lexer, the shunting-yard and the tree builder.
